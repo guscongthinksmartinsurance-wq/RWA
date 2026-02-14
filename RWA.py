@@ -50,33 +50,6 @@ def get_levels(symbol, days):
 # --- GIAO DIỆN ---
 st.set_page_config(page_title="RWA Elite Terminal", layout="wide")
 
-# PHẦN NÀY LÀ LINH HỒN ĐỂ ÉP 3 Ô METRIC HIỂN THỊ CHUYÊN NGHIỆP
-st.markdown("""
-<style>
-    /* Ép cỡ chữ và màu sắc cho Dashboard tổng */
-    [data-testid="stMetricValue"] {
-        font-size: 52px !important;
-        font-weight: 900 !important;
-        color: #ffffff !important;
-        text-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
-    }
-    [data-testid="stMetricLabel"] {
-        font-size: 16px !important;
-        color: #8b949e !important;
-        font-weight: 600 !important;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-    }
-    /* Làm đẹp các khối Metric */
-    [data-testid="stMetric"] {
-        background: #161b22;
-        padding: 20px;
-        border-radius: 15px;
-        border: 1px solid #30363d;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 try:
     ws, df_holdings = load_data()
     
@@ -90,10 +63,10 @@ try:
                 row = df_holdings[df_holdings['Coin'] == c_sel]
                 if not row.empty:
                     old_q, old_e = float(row['Holdings'].values[0]), float(row['Entry_Price'].values[0])
-                    new_q = old_q + q_add
-                    new_e = ((old_q * old_e) + (q_add * p_add)) / (old_q + q_add)
+                    total_q = old_q + q_add
+                    avg_e = ((old_q * old_e) + (q_add * p_add)) / total_q if total_q > 0 else 0
                     cell = ws.find(c_sel)
-                    ws.update(f"B{cell.row}:C{cell.row}", [[new_q, new_e]])
+                    ws.update(f"B{cell.row}:C{cell.row}", [[total_q, avg_e]])
                 else: ws.append_row([c_sel, q_add, p_add])
                 st.rerun()
         days_sel = st.select_slider("Khung Kỹ thuật (Ngày)", options=[7, 30, 90], value=30)
@@ -124,20 +97,31 @@ try:
 
         processed.append({"coin": coin, "cp": cp, "val": val, "h": h, "e": e, "pnl": pnl, "rec": rec, "col": col, "reason": reason, "ath": cfg['ath'], "sup": sup, "res": res, "tw": cfg['target_w']})
 
-    # --- 3 Ô METRIC: DASHBOARD TỔNG TỐI ƯU ---
-    st.markdown("### 📊 HỆ THỐNG QUẢN TRỊ TÀI SẢN RWA")
-    m_col1, m_col2, m_col3 = st.columns(3)
-    m_col1.metric("VỐN GIẢI NGÂN", f"${total_invest:,.2f}")
-    
+    # --- ĐỘ LẠI DASHBOARD TỔNG: ÉP ĐỀU 100% BẰNG HTML/CSS ---
     total_pnl_val = total_val - total_invest
     total_pnl_pct = (total_pnl_val / total_invest * 100) if total_invest > 0 else 0
-    m_col2.metric("LỜI / LỖ TỔNG", f"${total_pnl_val:,.2f}", f"{total_pnl_pct:.1f}%")
-    
-    m_col3.metric("TỔNG GIÁ TRỊ", f"${total_val:,.2f}")
+    pnl_color = "#3fb950" if total_pnl_val >= 0 else "#f85149"
 
-    st.markdown("---")
+    dashboard_html = f"""
+    <div style="display: flex; gap: 20px; margin-bottom: 30px; font-family: sans-serif;">
+        <div style="flex: 1; background: #161b22; padding: 25px; border-radius: 15px; border: 1px solid #30363d; text-align: center;">
+            <div style="color: #8b949e; font-size: 14px; text-transform: uppercase; font-weight: 600; letter-spacing: 1px;">Vốn Giải Ngân</div>
+            <div style="color: white; font-size: 48px; font-weight: 900; margin-top: 10px;">${total_invest:,.2f}</div>
+        </div>
+        <div style="flex: 1; background: #161b22; padding: 25px; border-radius: 15px; border: 1px solid #30363d; text-align: center;">
+            <div style="color: #8b949e; font-size: 14px; text-transform: uppercase; font-weight: 600; letter-spacing: 1px;">Lời / Lỗ Tổng</div>
+            <div style="color: {pnl_color}; font-size: 48px; font-weight: 900; margin-top: 10px;">${total_pnl_val:,.2f}</div>
+            <div style="color: {pnl_color}; font-size: 18px; font-weight: 700; margin-top: 5px;">{total_pnl_pct:+.1f}%</div>
+        </div>
+        <div style="flex: 1; background: #161b22; padding: 25px; border-radius: 15px; border: 1px solid #30363d; text-align: center;">
+            <div style="color: #8b949e; font-size: 14px; text-transform: uppercase; font-weight: 600; letter-spacing: 1px;">Tổng Giá Trị</div>
+            <div style="color: white; font-size: 48px; font-weight: 900; margin-top: 10px;">${total_val:,.2f}</div>
+        </div>
+    </div>
+    """
+    st.components.v1.html(dashboard_html, height=180)
 
-    # GIỮ NGUYÊN 100% CARDS CỦA ANH NHƯ TRONG HÌNH ẢNH CUỐI CÙNG
+    # GIỮ NGUYÊN 100% CARDS CỦA ANH
     for d in processed:
         rw = (d['val']/total_val*100) if total_val > 0 else 0
         fill = min(rw / d['tw'], 1.0) * 100
