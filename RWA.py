@@ -1,85 +1,125 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import gspread
+from google.oauth2.service_account import Credentials
+import numpy as np
 
-# --- 1. CẤU HÌNH DANH MỤC ---
-# Em đã kiểm tra kỹ các mã (Ticker) này trên Yahoo Finance cho anh
+# --- 1. CẤU HÌNH HỆ THỐNG ---
+ST_FILE_NAME = "TMC-Sales-Assistant"
+ST_SHEET_NAME = "Holdings"
+
 RWA_CONFIG = {
-    'LINK':   {'symbol': 'LINK-USD',   'weight': 0.35, 'v1': (7.9, 8.3), 'v2': (6.5, 7.2), 'ath': 52.8}, 
-    'ONDO':   {'symbol': 'ONDO-USD',   'weight': 0.20, 'v1': (0.22, 0.24), 'v2': (0.15, 0.18), 'ath': 2.14},
-    'QNT':    {'symbol': 'QNT-USD',    'weight': 0.15, 'v1': (58.0, 62.0), 'v2': (45.0, 50.0), 'ath': 428.0},
-    'PENDLE': {'symbol': 'PENDLE-USD', 'weight': 0.10, 'v1': (1.05, 1.15), 'v2': (0.75, 0.90), 'ath': 7.52},
-    'SYRUP':  {'symbol': 'MPL-USD',    'weight': 0.10, 'v1': (0.21, 0.25), 'v2': (0.14, 0.17), 'ath': 2.10}, 
-    'CFG':    {'symbol': 'CFG-USD',    'weight': 0.10, 'v1': (0.32, 0.36), 'v2': (0.22, 0.26), 'ath': 2.59}
+    'LINK':   {'symbol': 'LINK-USD',   'v1': (7.9, 8.3), 'v2': (6.5, 7.2), 'ath': 52.8}, 
+    'ONDO':   {'symbol': 'ONDO-USD',   'v1': (0.22, 0.24), 'v2': (0.15, 0.18), 'ath': 2.14},
+    'QNT':    {'symbol': 'QNT-USD',    'v1': (58.0, 62.0), 'v2': (45.0, 50.0), 'ath': 428.0},
+    'PENDLE': {'symbol': 'PENDLE-USD', 'v1': (1.05, 1.15), 'v2': (0.75, 0.90), 'ath': 7.52},
+    'SYRUP':  {'symbol': 'MPL-USD',    'v1': (0.21, 0.25), 'v2': (0.14, 0.17), 'ath': 2.10}, 
+    'CFG':    {'symbol': 'CFG-USD',    'v1': (0.32, 0.36), 'v2': (0.22, 0.26), 'ath': 2.59}
 }
 
-def get_holding(coin):
+# Kết nối Google Sheets
+def get_gsheet_client():
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds_info = st.secrets["gcp_service_account"]
+    credentials = Credentials.from_service_account_info(creds_info, scopes=scope)
+    return gspread.authorize(credentials)
+
+def load_data():
+    client = get_gsheet_client()
+    sheet = client.open(ST_FILE_NAME).worksheet(ST_SHEET_NAME)
+    df = pd.DataFrame(sheet.get_all_records())
+    return sheet, df
+
+# Tính toán Hỗ trợ/Kháng cự đơn giản (dựa trên 30 ngày)
+def get_tech_levels(symbol):
     try:
-        # Anh nhớ nạp cái này vào mục Settings > Secrets trên Streamlit Cloud nhé
-        return st.secrets["holdings"][coin]
+        hist = yf.download(symbol, period="30d", interval="1d", progress=False)
+        support = hist['Low'].min()
+        resistance = hist['High'].max()
+        return round(float(support), 3), round(float(resistance), 3)
     except:
-        return 0.0
+        return 0, 0
 
 # --- 2. GIAO DIỆN ---
-st.set_page_config(page_title="RWA Iron Hand 2026", layout="wide")
-st.title("🛡️ RWA Iron Hand Command Center - 2026")
-st.markdown(f"**Chào anh Công!** Tầm nhìn dài hạn cho chị Hân và bé Uyên Nghi.")
+st.set_page_config(page_title="RWA Pro Dashboard", layout="wide")
+st.title("🚀 RWA Command Center Pro - 2026")
 
-# --- 3. LẤY GIÁ (SỬA LỖI NAN) ---
-@st.cache_data(ttl=60) 
-def fetch_prices():
-    prices = {}
-    for coin, cfg in RWA_CONFIG.items():
-        try:
-            ticker = yf.Ticker(cfg['symbol'])
-            # Lấy giá thị trường hiện tại
-            price = ticker.fast_info['last_price']
-            prices[coin] = price
-        except:
-            prices[coin] = None
-    return prices
-
-def get_status(price, v1, v2):
-    if price is None: return "⌛ Chờ dữ liệu"
-    if v2[0] <= price <= v2[1]: return "🔥 VÙNG GOM 2"
-    if v1[0] <= price <= v1[1]: return "✅ VÙNG GOM 1"
-    if price < v2[0]: return "⚠️ GIÁ CỰC RẺ"
-    return "⌛ Đang quan sát"
-
-# --- 4. XỬ LÝ DỮ LIỆU ---
-prices = fetch_prices()
-
-if prices:
-    data_list = []
-    total_value = 0
+try:
+    sheet, df_holdings = load_data()
     
-    # Tính tổng giá trị trước
-    for coin, cfg in RWA_CONFIG.items():
-        price = prices[coin]
-        if price:
-            total_value += (price * get_holding(coin))
+    # --- SIDEBAR: NHẬP LIỆU TRỰC TIẾP ---
+    st.sidebar.header("📥 Cập nhật danh mục")
+    with st.sidebar.form("update_form"):
+        coin_select = st.selectbox("Chọn đồng coin", list(RWA_CONFIG.keys()))
+        new_hold = st.number_input("Số lượng nắm giữ", min_value=0.0)
+        new_entry = st.number_input("Giá vốn trung bình ($)", min_value=0.0)
+        new_target = st.number_input("Giá mục tiêu chốt lời ($)", min_value=0.0)
+        submit = st.form_submit_button("Cập nhật lên Cloud")
         
+        if submit:
+            # Tìm dòng để update hoặc thêm mới
+            cell = sheet.find(coin_select)
+            if cell:
+                sheet.update(f"B{cell.row}:D{cell.row}", [[new_hold, new_entry, new_target]])
+            else:
+                sheet.append_row([coin_select, new_hold, new_entry, new_target])
+            st.sidebar.success(f"Đã cập nhật {coin_select}!")
+            st.rerun()
+
+    # --- MAIN BOARD: PHÂN TÍCH & HIỂN THỊ ---
+    st.subheader("📊 Bảng Theo Dõi Chuyên Nghiệp")
+    
+    data_display = []
+    total_market_value = 0
+    
+    # Lấy giá toàn bộ để tránh bị chặn
+    symbols = [cfg['symbol'] for cfg in RWA_CONFIG.values()]
+    prices_raw = yf.download(symbols, period="1d", interval="1m", progress=False)['Close']
+
     for coin, cfg in RWA_CONFIG.items():
-        price = prices[coin]
-        hold = get_holding(coin)
-        val = (price * hold) if price else 0
-        weight_real = (val / total_value * 100) if total_value > 0 else 0
+        curr_price = prices_raw[cfg['symbol']].iloc[-1]
+        sup, res = get_tech_levels(cfg['symbol'])
         
-        data_list.append({
+        # Lấy data từ Google Sheet
+        user_row = df_holdings[df_holdings['Coin'] == coin]
+        hold = user_row['Holdings'].values[0] if not user_row.empty else 0
+        entry = user_row['Entry_Price'].values[0] if not user_row.empty else 0
+        target = user_row['Target_Price'].values[0] if not user_row.empty else 0
+        
+        val = curr_price * hold
+        total_market_value += val
+        
+        pnl = ((curr_price / entry) - 1) * 100 if entry > 0 else 0
+        upside = (cfg['ath'] / curr_price) if curr_price > 0 else 0
+        
+        data_display.append({
             "Coin": coin,
-            "Giá Hiện Tại": f"${price:.3f}" if price else "$nan",
-            "Trạng Thái": get_status(price, cfg['v1'], cfg['v2']),
-            "Vùng Gom 1": f"{cfg['v1'][0]}-{cfg['v1'][1]}",
-            "Vùng Gom 2": f"{cfg['v2'][0]}-{cfg['v2'][1]}",
-            "Giá Trị ($)": f"${val:,.2f}",
-            "Tỷ Trọng (%)": f"{weight_real:.1f}%",
-            "Cách ATH (%)": f"{((price/cfg['ath'])-1)*100:.1f}%" if price else "nan%"
+            "Giá Hiện Tại": f"${curr_price:.3f}",
+            "Giá Vốn (Avg)": f"${entry:.3f}",
+            "Lời/Lỗ (%)": pnl,
+            "Hỗ Trợ": f"${sup:.3f}",
+            "Kháng Cự": f"${res:.3f}",
+            "Giá Trị ($)": val,
+            "Đỉnh ATH": f"${cfg['ath']:.1f}",
+            "Kỳ vọng ATH": f"x{upside:.1f}"
         })
 
-    # Hiển thị bảng
-    st.table(pd.DataFrame(data_list))
-    
-    # Hiển thị tổng vốn
-    st.header(f"Tổng vốn RWA: ${total_value:,.2f} USDT")
-else:
-    st.warning("Đang tải dữ liệu...")
+    df_final = pd.DataFrame(data_display)
+
+    # Hiển thị Metric tổng quát
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Tổng Tài Sản RWA", f"${total_market_value:,.2f}")
+    c2.metric("Số lượng mã", len(df_holdings))
+    c3.info("💡 Mẹo: Nhập giá vốn bên trái để tính Lời/Lỗ")
+
+    # Định dạng màu sắc cho bảng
+    def color_pnl(val):
+        color = '#155724' if val > 0 else '#721c24'
+        return f'color: {color}; font-weight: bold'
+
+    st.table(df_final.style.format({"Lời/Lỗ (%)": "{:.1f}%", "Giá Trị ($)": "${:,.2f}"}).applymap(color_pnl, subset=['Lời/Lỗ (%)']))
+
+except Exception as e:
+    st.error(f"Lỗi kết nối: {e}")
+    st.info("Anh kiểm tra lại: 1. Đã share quyền Editor cho email Service Account chưa? 2. Tên file/worksheet đúng chưa?")
