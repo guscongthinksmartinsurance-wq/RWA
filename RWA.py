@@ -4,7 +4,7 @@ import yfinance as yf
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- CẤU HÌNH CHIẾN LƯỢC ---
+# --- CẤU HÌNH ---
 ST_FILE_NAME = "TMC-Sales-Assistant"
 ST_SHEET_NAME = "Holdings"
 HEADERS = ["Coin", "Holdings", "Entry_Price", "Target_Price"]
@@ -37,106 +37,109 @@ def load_data():
     data = worksheet.get_all_records()
     return worksheet, pd.DataFrame(data) if data else pd.DataFrame(columns=HEADERS)
 
-def get_status(price, v1, v2):
-    if not price or price == 0: return "⌛ Đang tải..."
-    if v2[0] <= price <= v2[1]: return "🔥 VÙNG GOM 2"
-    if v1[0] <= price <= v1[1]: return "✅ VÙNG GOM 1"
-    if price < v2[0]: return "⚠️ GIÁ CỰC RẺ"
-    return "⌛ Đang quan sát"
+def get_tech_levels(symbol):
+    try:
+        hist = yf.download(symbol, period="30d", interval="1d", progress=False)
+        return round(float(hist['Low'].min()), 3), round(float(hist['High'].max()), 3)
+    except: return 0.0, 0.0
 
 # --- GIAO DIỆN ---
 st.set_page_config(page_title="RWA Command Center Pro", layout="wide")
-
-st.markdown("""
-    <style>
-    .stMetric { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4259; }
-    [data-testid="stDataFrame"] { background-color: #0e1117; }
-    </style>
-    """, unsafe_allow_html=True)
-
-st.title("🛡️ RWA Iron Hand Command Center - 2026")
 
 try:
     sheet, df_holdings = load_data()
     
     with st.sidebar:
-        st.header("📥 Cập nhật danh mục")
-        with st.form("update_form"):
+        st.header("➕ Thêm lệnh mua mới (DCA)")
+        with st.form("dca_form"):
             coin_select = st.selectbox("Chọn đồng coin", list(RWA_CONFIG.keys()))
-            new_hold = st.number_input("Số lượng", min_value=0.0, step=0.1)
-            new_entry = st.number_input("Giá vốn trung bình ($)", min_value=0.0, step=0.01)
-            new_target = st.number_input("Giá mục tiêu ($)", min_value=0.0, step=0.01)
-            if st.form_submit_button("LƯU LÊN CLOUD"):
-                if not df_holdings.empty and coin_select in df_holdings['Coin'].values.tolist():
+            buy_amount = st.number_input("Số lượng vừa mua thêm", min_value=0.0, step=0.1)
+            buy_price = st.number_input("Giá khớp lệnh ($)", min_value=0.0, step=0.01)
+            target_p = st.number_input("Cập nhật giá mục tiêu ($)", min_value=0.0, step=0.01)
+            
+            if st.form_submit_button("XÁC NHẬN CỘNG DỒN VỊ THẾ"):
+                user_row = df_holdings[df_holdings['Coin'] == coin_select]
+                if not user_row.empty:
+                    old_h = float(user_row['Holdings'].values[0])
+                    old_e = float(user_row['Entry_Price'].values[0])
+                    
+                    # Công thức tính Giá vốn bình quân (DCA)
+                    new_total_hold = old_h + buy_amount
+                    new_avg_entry = ((old_h * old_e) + (buy_amount * buy_price)) / new_total_hold if new_total_hold > 0 else 0
+                    
                     cell = sheet.find(coin_select)
-                    sheet.update(f"B{cell.row}:D{cell.row}", [[new_hold, new_entry, new_target]])
+                    sheet.update(f"B{cell.row}:D{cell.row}", [[new_total_hold, new_avg_entry, target_p]])
                 else:
-                    sheet.append_row([coin_select, new_hold, new_entry, new_target])
-                st.success("Đã cập nhật!")
+                    sheet.append_row([coin_select, buy_amount, buy_price, target_p])
+                
+                st.success("Đã tự động cộng dồn tài sản!")
                 st.rerun()
 
-    # LẤY GIÁ MỚI (FIX LỖI NONE)
+    # LẤY GIÁ & PHÂN TÍCH
     tickers = yf.Tickers(" ".join([cfg['symbol'] for cfg in RWA_CONFIG.values()]))
-    
     data_display = []
-    total_value = 0
-    total_profit = 0
+    total_market_val = 0
+    total_invested = 0
 
     for coin, cfg in RWA_CONFIG.items():
-        # Lấy giá đóng cửa gần nhất
-        try:
-            curr_price = tickers.tickers[cfg['symbol']].fast_info['last_price']
-        except:
-            curr_price = 0.0
-            
+        try: curr_p = tickers.tickers[cfg['symbol']].fast_info['last_price']
+        except: curr_p = 0.0
+        
+        sup, res = get_tech_levels(cfg['symbol'])
         user_data = df_holdings[df_holdings['Coin'] == coin] if not df_holdings.empty else pd.DataFrame()
+        
         hold = float(user_data['Holdings'].values[0]) if not user_data.empty else 0.0
         entry = float(user_data['Entry_Price'].values[0]) if not user_data.empty else 0.0
         
-        val = curr_price * hold
-        total_value += val
-        pnl_val = (curr_price - entry) * hold if entry > 0 else 0.0
-        total_profit += pnl_val
-        pnl_pct = ((curr_price / entry) - 1) * 100 if entry > 0 else 0.0
+        val = curr_p * hold
+        total_market_val += val
+        total_invested += (entry * hold)
+        pnl_pct = ((curr_p / entry) - 1) * 100 if entry > 0 else 0.0
         
+        # Logic trạng thái vùng gom
+        if res > 0 and curr_p >= res * 0.98: status = "⛔ KHÁNG CỰ (Bán?)"
+        elif sup > 0 and curr_p <= sup * 1.02: status = "🛒 HỖ TRỢ (Mua!)"
+        elif cfg['v2'][0] <= curr_p <= cfg['v2'][1]: status = "🔥 VÙNG GOM 2"
+        elif cfg['v1'][0] <= curr_p <= cfg['v1'][1]: status = "✅ VÙNG GOM 1"
+        else: status = "⌛ Đang quan sát"
+
         data_display.append({
             "Coin": coin,
-            "Giá Hiện Tại": curr_price,
-            "Trạng Thái": get_status(curr_price, cfg['v1'], cfg['v2']),
-            "Vùng Gom 1": f"{cfg['v1'][0]}-{cfg['v1'][1]}",
-            "Vùng Gom 2": f"{cfg['v2'][0]}-{cfg['v2'][1]}",
-            "Giá Vốn": entry,
+            "Giá Hiện Tại": curr_p,
+            "Trạng Thái": status,
+            "Hỗ Trợ (30d)": sup,
+            "Kháng Cự (30d)": res,
+            "Giá Vốn (Avg)": entry,
             "Lời/Lỗ (%)": pnl_pct,
             "Giá Trị ($)": val,
-            "Kỳ vọng": f"x{cfg['ath']/curr_price:.1f}" if curr_price > 0 else "0"
+            "Kỳ vọng": f"x{cfg['ath']/curr_p:.1f}" if curr_p > 0 else "0"
         })
 
-    # HIỂN THỊ METRICS
+    # METRICS
     c1, c2, c3 = st.columns(3)
-    c1.metric("TỔNG TÀI SẢN (USDT)", f"${total_value:,.2f}")
-    c2.metric("LỜI / LỖ TỔNG", f"${total_profit:,.2f}", f"{pnl_pct:.1f}%" if total_value > 0 else "0%")
-    c3.metric("MÃ THEO DÕI", len(RWA_CONFIG))
+    c1.metric("TỔNG TÀI SẢN (USDT)", f"${total_market_val:,.2f}")
+    c2.metric("LỜI / LỖ TỔNG", f"${(total_market_val - total_invested):,.2f}", f"{((total_market_val/total_invested)-1)*100 if total_invested > 0 else 0:.1f}%")
+    c3.metric("VỐN ĐÃ GIẢI NGÂN", f"${total_invested:,.2f}")
 
-    st.subheader("📡 Central Action Board")
+    st.subheader("📡 Central Action Board (Pro)")
     df_final = pd.DataFrame(data_display)
 
-    def style_df(row):
+    def style_pro(row):
         styles = [''] * len(row)
-        if 'GOM' in str(row['Trạng Thái']):
+        if 'HỖ TRỢ' in str(row['Trạng Thái']) or 'GOM' in str(row['Trạng Thái']):
             styles[df_final.columns.get_loc('Trạng Thái')] = 'background-color: #155724; color: white'
-        if row['Lời/Lỗ (%)'] > 0:
-            styles[df_final.columns.get_loc('Lời/Lỗ (%)')] = 'color: #28a745'
-        elif row['Lời/Lỗ (%)'] < 0:
-            styles[df_final.columns.get_loc('Lời/Lỗ (%)')] = 'color: #dc3545'
+        if 'KHÁNG CỰ' in str(row['Trạng Thái']):
+            styles[df_final.columns.get_loc('Trạng Thái')] = 'background-color: #721c24; color: white'
         return styles
 
     st.dataframe(
-        df_final.style.apply(style_df, axis=1).format({
-            "Giá Hiện Tại": "${:.3f}", "Giá Vốn": "${:.3f}",
+        df_final.style.apply(style_pro, axis=1).format({
+            "Giá Hiện Tại": "${:.3f}", "Giá Vốn (Avg)": "${:.3f}",
+            "Hỗ Trợ (30d)": "${:.3f}", "Kháng Cự (30d)": "${:.3f}",
             "Lời/Lỗ (%)": "{:.1f}%", "Giá Trị ($)": "${:,.2f}"
         }),
         use_container_width=True, hide_index=True
     )
 
 except Exception as e:
-    st.error(f"Lỗi: {e}")
+    st.error(f"Lỗi hệ thống: {e}")
