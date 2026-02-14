@@ -3,11 +3,12 @@ import pandas as pd
 import yfinance as yf
 import gspread
 from google.oauth2.service_account import Credentials
+import datetime
 
-# --- CẤU HÌNH ---
+# --- CONFIG CHIẾN LƯỢC ---
 ST_FILE_NAME = "TMC-Sales-Assistant"
 ST_SHEET_NAME = "Holdings"
-HEADERS = ["Coin", "Holdings", "Entry_Price", "Target_Price"]
+HEADERS = ["Coin", "Holdings", "Entry_Price"] # Bỏ Target_Price theo ý anh
 
 RWA_CONFIG = {
     'LINK':   {'symbol': 'LINK-USD',   'v1': (7.9, 8.3), 'v2': (6.5, 7.2), 'ath': 52.8}, 
@@ -18,128 +19,139 @@ RWA_CONFIG = {
     'CFG':    {'symbol': 'CFG-USD',    'v1': (0.32, 0.36), 'v2': (0.22, 0.26), 'ath': 2.59}
 }
 
-# --- KẾT NỐI DỮ LIỆU ---
+# --- HỆ THỐNG DỮ LIỆU ---
 @st.cache_resource
 def get_gsheet_client():
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds_info = st.secrets["gcp_service_account"]
-    credentials = Credentials.from_service_account_info(creds_info, scopes=scope)
-    return gspread.authorize(credentials)
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    return gspread.authorize(Credentials.from_service_account_info(creds_info, scopes=scope))
 
 def load_data():
     client = get_gsheet_client()
     sh = client.open(ST_FILE_NAME)
     try:
-        worksheet = sh.worksheet(ST_SHEET_NAME)
+        ws = sh.worksheet(ST_SHEET_NAME)
     except:
-        worksheet = sh.add_worksheet(title=ST_SHEET_NAME, rows="100", cols="20")
-        worksheet.append_row(HEADERS)
-    data = worksheet.get_all_records()
-    return worksheet, pd.DataFrame(data) if data else pd.DataFrame(columns=HEADERS)
+        ws = sh.add_worksheet(title=ST_SHEET_NAME, rows="100", cols="10")
+        ws.append_row(HEADERS)
+    data = ws.get_all_records()
+    return ws, pd.DataFrame(data) if data else pd.DataFrame(columns=HEADERS)
 
-def get_tech_levels(symbol):
-    try:
-        hist = yf.download(symbol, period="30d", interval="1d", progress=False)
-        return round(float(hist['Low'].min()), 3), round(float(hist['High'].max()), 3)
-    except: return 0.0, 0.0
+def get_tech_levels(symbol, days):
+    hist = yf.download(symbol, period=f"{days}d", interval="1d", progress=False)
+    if hist.empty: return 0.0, 0.0
+    return round(float(hist['Low'].min()), 3), round(float(hist['High'].max()), 3)
 
-# --- GIAO DIỆN ---
-st.set_page_config(page_title="RWA Command Center Pro", layout="wide")
+# --- GIAO DIỆN ELITE ---
+st.set_page_config(page_title="RWA Command Center Elite", layout="wide")
+
+# CSS tinh chỉnh giao diện Pro
+st.markdown("""
+    <style>
+    .stMetric { background-color: #1e2130; padding: 20px; border-radius: 12px; border-left: 5px solid #4e73df; }
+    [data-testid="stSidebar"] { background-color: #111421; }
+    .status-box { padding: 5px 10px; border-radius: 5px; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🛡️ RWA Iron Hand Command Center - 2026")
+st.caption(f"Manager: Anh Công | Chào anh, chúc gia đình và bé Uyên Nghi một năm 2026 rực rỡ.")
 
 try:
     sheet, df_holdings = load_data()
     
     with st.sidebar:
-        st.header("➕ Thêm lệnh mua mới (DCA)")
+        st.header("⚡ Lệnh Mua DCA Mới")
         with st.form("dca_form"):
-            coin_select = st.selectbox("Chọn đồng coin", list(RWA_CONFIG.keys()))
-            buy_amount = st.number_input("Số lượng vừa mua thêm", min_value=0.0, step=0.1)
-            buy_price = st.number_input("Giá khớp lệnh ($)", min_value=0.0, step=0.01)
-            target_p = st.number_input("Cập nhật giá mục tiêu ($)", min_value=0.0, step=0.01)
+            coin_sel = st.selectbox("Chọn Coin", list(RWA_CONFIG.keys()))
+            new_qty = st.number_input("Số lượng mua thêm", min_value=0.0, step=0.1)
+            new_prc = st.number_input("Giá khớp lệnh ($)", min_value=0.0, step=0.01)
             
-            if st.form_submit_button("XÁC NHẬN CỘNG DỒN VỊ THẾ"):
-                user_row = df_holdings[df_holdings['Coin'] == coin_select]
+            if st.form_submit_button("XÁC NHẬN CỘNG DỒN"):
+                user_row = df_holdings[df_holdings['Coin'] == coin_sel]
                 if not user_row.empty:
-                    old_h = float(user_row['Holdings'].values[0])
+                    old_q = float(user_row['Holdings'].values[0])
                     old_e = float(user_row['Entry_Price'].values[0])
+                    # Tính toán DCA
+                    total_q = old_q + new_qty
+                    avg_e = ((old_q * old_e) + (new_qty * new_prc)) / total_q if total_q > 0 else 0
                     
-                    # Công thức tính Giá vốn bình quân (DCA)
-                    new_total_hold = old_h + buy_amount
-                    new_avg_entry = ((old_h * old_e) + (buy_amount * buy_price)) / new_total_hold if new_total_hold > 0 else 0
-                    
-                    cell = sheet.find(coin_select)
-                    sheet.update(f"B{cell.row}:D{cell.row}", [[new_total_hold, new_avg_entry, target_p]])
+                    cell = sheet.find(coin_sel)
+                    sheet.update(f"B{cell.row}:C{cell.row}", [[total_q, avg_e]])
                 else:
-                    sheet.append_row([coin_select, buy_amount, buy_price, target_p])
-                
-                st.success("Đã tự động cộng dồn tài sản!")
+                    sheet.append_row([coin_sel, new_qty, new_prc])
+                st.success(f"Đã cộng dồn vị thế {coin_sel}")
                 st.rerun()
+        
+        st.divider()
+        time_frame = st.select_slider("Khung thời gian Kháng cự/Hỗ trợ (Ngày)", options=[7, 14, 30, 90, 180], value=30)
 
-    # LẤY GIÁ & PHÂN TÍCH
+    # Lấy giá & Quét kỹ thuật
     tickers = yf.Tickers(" ".join([cfg['symbol'] for cfg in RWA_CONFIG.values()]))
-    data_display = []
-    total_market_val = 0
-    total_invested = 0
+    data_final = []
+    total_val, total_invest = 0, 0
 
     for coin, cfg in RWA_CONFIG.items():
-        try: curr_p = tickers.tickers[cfg['symbol']].fast_info['last_price']
-        except: curr_p = 0.0
+        try: cp = tickers.tickers[cfg['symbol']].fast_info['last_price']
+        except: cp = 0.0
         
-        sup, res = get_tech_levels(cfg['symbol'])
+        sup, res = get_tech_levels(cfg['symbol'], time_frame)
         user_data = df_holdings[df_holdings['Coin'] == coin] if not df_holdings.empty else pd.DataFrame()
         
-        hold = float(user_data['Holdings'].values[0]) if not user_data.empty else 0.0
-        entry = float(user_data['Entry_Price'].values[0]) if not user_data.empty else 0.0
+        h = float(user_data['Holdings'].values[0]) if not user_data.empty else 0.0
+        e = float(user_data['Entry_Price'].values[0]) if not user_data.empty else 0.0
         
-        val = curr_p * hold
-        total_market_val += val
-        total_invested += (entry * hold)
-        pnl_pct = ((curr_p / entry) - 1) * 100 if entry > 0 else 0.0
+        val = cp * h
+        total_val += val
+        total_invest += (e * h)
+        pnl = ((cp / e) - 1) * 100 if e > 0 else 0.0
         
-        # Logic trạng thái vùng gom
-        if res > 0 and curr_p >= res * 0.98: status = "⛔ KHÁNG CỰ (Bán?)"
-        elif sup > 0 and curr_p <= sup * 1.02: status = "🛒 HỖ TRỢ (Mua!)"
-        elif cfg['v2'][0] <= curr_p <= cfg['v2'][1]: status = "🔥 VÙNG GOM 2"
-        elif cfg['v1'][0] <= curr_p <= cfg['v1'][1]: status = "✅ VÙNG GOM 1"
-        else: status = "⌛ Đang quan sát"
+        # Logic trạng thái thông minh
+        if cp >= res * 0.98: st_txt = "🔴 CHẠM KHÁNG CỰ"
+        elif cp <= sup * 1.02: st_txt = "🟢 CHẠM HỖ TRỢ"
+        elif cfg['v2'][0] <= cp <= cfg['v2'][1]: st_txt = "🔥 VÙNG GOM 2"
+        elif cfg['v1'][0] <= cp <= cfg['v1'][1]: st_txt = "✅ VÙNG GOM 1"
+        else: st_txt = "⌛ Đang quan sát"
 
-        data_display.append({
+        data_final.append({
             "Coin": coin,
-            "Giá Hiện Tại": curr_p,
-            "Trạng Thái": status,
-            "Hỗ Trợ (30d)": sup,
-            "Kháng Cự (30d)": res,
-            "Giá Vốn (Avg)": entry,
-            "Lời/Lỗ (%)": pnl_pct,
+            "Giá Hiện Tại": cp,
+            "Trạng Thái": st_txt,
+            f"Hỗ Trợ ({time_frame}d)": sup,
+            f"Kháng Cự ({time_frame}d)": res,
+            "Giá Vốn (Avg)": e,
+            "Lời/Lỗ (%)": pnl,
             "Giá Trị ($)": val,
-            "Kỳ vọng": f"x{cfg['ath']/curr_p:.1f}" if curr_p > 0 else "0"
+            "Kỳ vọng": f"x{cfg['ath']/cp:.1f}" if cp > 0 else "0"
         })
 
-    # METRICS
+    # TOP METRICS
     c1, c2, c3 = st.columns(3)
-    c1.metric("TỔNG TÀI SẢN (USDT)", f"${total_market_val:,.2f}")
-    c2.metric("LỜI / LỖ TỔNG", f"${(total_market_val - total_invested):,.2f}", f"{((total_market_val/total_invested)-1)*100 if total_invested > 0 else 0:.1f}%")
-    c3.metric("VỐN ĐÃ GIẢI NGÂN", f"${total_invested:,.2f}")
+    c1.metric("TỔNG TÀI SẢN", f"${total_val:,.2f}")
+    c2.metric("LỜI / LỖ TỔNG", f"${(total_val - total_invest):,.2f}", f"{((total_val/total_invest)-1)*100 if total_invest > 0 else 0:.1f}%")
+    c3.metric("VỐN ĐÃ GIẢI NGÂN", f"${total_invest:,.2f}")
 
-    st.subheader("📡 Central Action Board (Pro)")
-    df_final = pd.DataFrame(data_display)
+    st.subheader("📡 Central Intelligence Board")
+    df_res = pd.DataFrame(data_final)
 
-    def style_pro(row):
+    # Style bảng chuyên nghiệp
+    def style_elite(row):
         styles = [''] * len(row)
-        if 'HỖ TRỢ' in str(row['Trạng Thái']) or 'GOM' in str(row['Trạng Thái']):
-            styles[df_final.columns.get_loc('Trạng Thái')] = 'background-color: #155724; color: white'
-        if 'KHÁNG CỰ' in str(row['Trạng Thái']):
-            styles[df_final.columns.get_loc('Trạng Thái')] = 'background-color: #721c24; color: white'
+        idx_st = df_res.columns.get_loc("Trạng Thái")
+        if "HỖ TRỢ" in row["Trạng Thái"] or "GOM" in row["Trạng Thái"]:
+            styles[idx_st] = 'background-color: #155724; color: white'
+        elif "KHÁNG CỰ" in row["Trạng Thái"]:
+            styles[idx_st] = 'background-color: #721c24; color: white'
         return styles
 
     st.dataframe(
-        df_final.style.apply(style_pro, axis=1).format({
+        df_res.style.apply(style_elite, axis=1).format({
             "Giá Hiện Tại": "${:.3f}", "Giá Vốn (Avg)": "${:.3f}",
-            "Hỗ Trợ (30d)": "${:.3f}", "Kháng Cự (30d)": "${:.3f}",
+            f"Hỗ Trợ ({time_frame}d)": "${:.3f}", f"Kháng Cự ({time_frame}d)": "${:.3f}",
             "Lời/Lỗ (%)": "{:.1f}%", "Giá Trị ($)": "${:,.2f}"
         }),
         use_container_width=True, hide_index=True
     )
 
 except Exception as e:
-    st.error(f"Lỗi hệ thống: {e}")
+    st.error(f"Lỗi: {e}")
