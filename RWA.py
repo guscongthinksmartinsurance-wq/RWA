@@ -5,7 +5,10 @@ import gspread
 from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
 
-# --- 1. CHIẾN LƯỢC CHI TIẾT (TAB 1) ---
+# --- 1. DANH SÁCH COIN PHỔ BIẾN ĐỂ SEARCH (SIDEBAR) ---
+COIN_LIST = ["LINK", "ONDO", "QNT", "PENDLE", "SYRUP", "CFG", "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "DOT", "TRX"]
+
+# --- 2. CHIẾN LƯỢC CHI TIẾT (TAB 1) ---
 ST_FILE_NAME = "TMC-Sales-Assistant"
 ST_SHEET_NAME = "Holdings"
 HEADERS = ["Coin", "Holdings", "Entry_Price"]
@@ -19,18 +22,7 @@ RWA_STRATEGY = {
     'CFG':    {'symbol': 'CFG-USD',    'target_w': 10, 'v1': (0.32, 0.36), 'v2': (0.22, 0.26), 'ath': 2.59}
 }
 
-# --- 2. HÀM KỸ THUẬT QUÁ BÁN/QUÁ MUA (TAB 2) ---
-def calculate_metrics(df):
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / (loss + 1e-10)
-    rsi = 100 - (100 / (1 + rs))
-    avg_vol = df['Volume'].rolling(window=10).mean()
-    vol_ratio = df['Volume'] / (avg_vol + 1e-10)
-    return rsi.iloc[-1], vol_ratio.iloc[-1]
-
-# --- 3. KẾT NỐI DỮ LIỆU ---
+# --- 3. KẾT NỐI & HÀM KỸ THUẬT ---
 @st.cache_resource
 def get_gsheet_client():
     creds_info = st.secrets["gcp_service_account"]
@@ -42,13 +34,23 @@ def load_data():
     try:
         sh = client.open(ST_FILE_NAME)
         ws = sh.worksheet(ST_SHEET_NAME)
-    except Exception:
+    except:
         sh = client.open(ST_FILE_NAME)
         ws = sh.add_worksheet(title=ST_SHEET_NAME, rows="100", cols="10")
         ws.append_row(HEADERS)
     data = ws.get_all_records()
     df = pd.DataFrame(data) if data else pd.DataFrame(columns=HEADERS)
     return ws, df
+
+def calculate_metrics(df):
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / (loss + 1e-10)
+    rsi = 100 - (100 / (1 + rs))
+    avg_vol = df['Volume'].rolling(window=10).mean()
+    vol_ratio = df['Volume'] / (avg_vol + 1e-10)
+    return rsi.iloc[-1], vol_ratio.iloc[-1]
 
 # --- 4. GIAO DIỆN CHÍNH ---
 st.set_page_config(page_title="RWA Elite Terminal", layout="wide")
@@ -62,8 +64,9 @@ try:
         st.divider()
         st.header("🏢 TRẠM DCA")
         with st.form("dca"):
-            c_sel = st.text_input("Mã Coin (VD: LINK, BTC, SOL)").upper()
-            q_add = st.number_input("Số lượng mua", min_value=0.0)
+            # Nâng cấp: Dùng Selectbox có search cho Mã Coin
+            c_sel = st.selectbox("Chọn hoặc Tìm mã Coin", options=sorted(list(set(COIN_LIST + df_holdings['Coin'].tolist()))))
+            q_add = st.number_input("Số lượng mua thêm", min_value=0.0)
             p_add = st.number_input("Giá mua ($)", min_value=0.0)
             if st.form_submit_button("XÁC NHẬN LỆNH"):
                 row = df_holdings[df_holdings['Coin'] == c_sel]
@@ -77,7 +80,7 @@ try:
                 st.rerun()
         days_sel = st.select_slider("Khung Kỹ thuật (Ngày)", options=[7, 30, 90], value=30)
 
-    # LẤY DỮ LIỆU THỊ TRƯỜNG
+    # XỬ LÝ DỮ LIỆU THỊ TRƯỜNG
     all_coins = list(set(list(RWA_STRATEGY.keys()) + df_holdings['Coin'].tolist()))
     tickers = yf.Tickers(" ".join([f"{c}-USD" for c in all_coins if c]))
     
@@ -90,13 +93,13 @@ try:
             symbol = f"{coin}-USD"
             df_h = tickers.tickers[symbol].history(period="60d")
             cp = float(tickers.tickers[symbol].fast_info['last_price'])
-            
             u_row = df_holdings[df_holdings['Coin'] == coin]
             h, e = (float(u_row['Holdings'].values[0]), float(u_row['Entry_Price'].values[0])) if not u_row.empty else (0.0, 0.0)
             
+            coin_invested = h * e # Tổng vốn đã vào cho đồng coin này
             val = cp * h
             total_val += val
-            total_invest += (e * h)
+            total_invest += coin_invested
             pnl = ((cp / e) - 1) * 100 if e > 0 else 0
             
             if coin in RWA_STRATEGY:
@@ -104,34 +107,19 @@ try:
                 sup = float(df_h['Low'].rolling(window=days_sel).min().iloc[-1])
                 res = float(df_h['High'].rolling(window=days_sel).max().iloc[-1])
                 rw = (val / total_budget * 100)
-                p1_data.append({"coin": coin, "cp": cp, "val": val, "e": e, "pnl": pnl, "sup": sup, "res": res, "tw": cfg['target_w'], "rw": rw, "v1": cfg['v1'], "v2": cfg['v2'], "ath": cfg['ath']})
+                p1_data.append({"coin": coin, "cp": cp, "val": val, "e": e, "pnl": pnl, "sup": sup, "res": res, "tw": cfg['target_w'], "rw": rw, "v1": cfg['v1'], "v2": cfg['v2'], "ath": cfg['ath'], "invested": coin_invested})
             else:
                 rsi, vol = calculate_metrics(df_h)
                 s_h = float(df_h['Low'].rolling(window=days_sel).min().iloc[-1])
                 r_h = float(df_h['High'].rolling(window=days_sel).max().iloc[-1])
                 a_h = float(df_h['High'].max())
-                p2_data.append({"coin": coin, "cp": cp, "rsi": rsi, "vol": vol, "sup": s_h, "res": r_h, "ath": a_h, "val": val, "pnl": pnl})
+                p2_data.append({"coin": coin, "cp": cp, "rsi": rsi, "vol": vol, "sup": s_h, "res": r_h, "ath": a_h, "val": val, "pnl": pnl, "invested": coin_invested})
         except: continue
 
-    # --- DASHBOARD TỔNG ---
-    pnl_total = total_val - total_invest
-    pnl_color = "#3fb950" if pnl_total >= 0 else "#f85149"
-    dash_html = f"""
-    <div style="display: flex; gap: 20px; margin-bottom: 20px; font-family: sans-serif;">
-        <div style="flex: 1; background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; text-align: center;">
-            <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Cash Còn Lại</div>
-            <div style="color: #58a6ff; font-size: 38px; font-weight: 900;">${(total_budget - total_invest):,.2f}</div>
-        </div>
-        <div style="flex: 1; background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; text-align: center;">
-            <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Lời / Lỗ Danh Mục</div>
-            <div style="color: {pnl_color}; font-size: 38px; font-weight: 900;">${pnl_total:,.2f}</div>
-        </div>
-        <div style="flex: 1; background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; text-align: center;">
-            <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Tổng Tài Sản</div>
-            <div style="color: white; font-size: 38px; font-weight: 900;">${total_val:,.2f}</div>
-        </div>
-    </div>
-    """
+    # DASHBOARD TỔNG
+    p_total = total_val - total_invest
+    p_c = "#3fb950" if p_total >= 0 else "#f85149"
+    dash_html = f"""<div style="display: flex; gap: 20px; margin-bottom: 20px; font-family: sans-serif;"><div style="flex: 1; background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; text-align: center;"><div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Cash Còn Lại</div><div style="color: #58a6ff; font-size: 38px; font-weight: 900;">${(total_budget - total_invest):,.2f}</div></div><div style="flex: 1; background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; text-align: center;"><div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Lời / Lỗ Danh Mục</div><div style="color: {p_c}; font-size: 38px; font-weight: 900;">${p_total:,.2f}</div></div><div style="flex: 1; background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; text-align: center;"><div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Tổng Tài Sản</div><div style="color: white; font-size: 38px; font-weight: 900;">${total_val:,.2f}</div></div></div>"""
     components.html(dash_html, height=160)
 
     t1, t2 = st.tabs(["🛡️ CHIẾN LƯỢC RWA", "🔍 MÁY QUÉT HUNTER"])
@@ -150,7 +138,7 @@ try:
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <div style="width: 55%;">
                         <div style="font-size: 36px; font-weight: 900; color: #58a6ff;">{d['coin']}</div>
-                        <div style="font-size: 14px; color: #8b949e; margin-top: 8px;">Tiến độ: <b>{d['rw']:.1f}%</b> / {d['tw']}%</div>
+                        <div style="font-size: 14px; color: #8b949e; margin-top: 8px;">Tiến độ gom: <b>{d['rw']:.1f}%</b> / {d['tw']}%</div>
                         <div style="background: #30363d; border-radius: 20px; height: 10px; width: 100%; margin-top: 10px;"><div style="background: #1f6feb; height: 100%; border-radius: 20px; width: {fill}%;"></div></div>
                     </div>
                     <div style="text-align: right;">
@@ -158,11 +146,12 @@ try:
                         <div style="color:{'#3fb950' if d['pnl']>=0 else '#f85149'}; font-size: 22px; font-weight: 800;">{d['pnl']:+.1f}%</div>
                     </div>
                 </div>
-                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; text-align: center; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 15px;">
-                    <div><div style="color:#8b949e; font-size:11px; text-transform:uppercase;">Vốn Avg</div><div style="font-size:22px; font-weight:700;">${d['e']:.3f}</div></div>
-                    <div><div style="color:#8b949e; font-size:11px; text-transform:uppercase;">🛡️ Hỗ trợ</div><div style="font-size:22px; font-weight:700; color:#3fb950;">${d['sup']:.3f}</div></div>
-                    <div><div style="color:#8b949e; font-size:11px; text-transform:uppercase;">⛔ Kháng cự</div><div style="font-size:22px; font-weight:700; color:#f85149;">${d['res']:.3f}</div></div>
-                    <div><div style="color:#8b949e; font-size:11px; text-transform:uppercase;">Đỉnh ATH</div><div style="font-size:22px; font-weight:700; color:#d29922;">${d['ath']}</div></div>
+                <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; text-align: center; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 15px;">
+                    <div><div style="color:#8b949e; font-size:10px; text-transform:uppercase;">Vốn Đã Vào</div><div style="font-size:18px; font-weight:700; color:#58a6ff;">${d['invested']:,.2f}</div></div>
+                    <div><div style="color:#8b949e; font-size:10px; text-transform:uppercase;">Vốn Avg</div><div style="font-size:18px; font-weight:700;">${d['e']:.3f}</div></div>
+                    <div><div style="color:#8b949e; font-size:10px; text-transform:uppercase;">🛡️ Hỗ trợ</div><div style="font-size:18px; font-weight:700; color:#3fb950;">${d['sup']:.3f}</div></div>
+                    <div><div style="color:#8b949e; font-size:10px; text-transform:uppercase;">⛔ Kháng cự</div><div style="font-size:18px; font-weight:700; color:#f85149;">${d['res']:.3f}</div></div>
+                    <div><div style="color:#8b949e; font-size:10px; text-transform:uppercase;">Đỉnh ATH</div><div style="font-size:18px; font-weight:700; color:#d29922;">${d['ath']}</div></div>
                 </div>
                 <div style="margin-top: 20px; padding: 15px; border-radius: 12px; border-left: 8px solid {col}; background: {col}15; color: {col}; font-weight: 800; font-size: 18px;">
                     PHÂN TÍCH: {rec} <br><span style="font-size: 14px; font-weight: 400; color: #f0f6fc;">Lý do: {reason}</span>
@@ -175,7 +164,7 @@ try:
             dist_s = ((d['cp'] / d['sup']) - 1) * 100 if d['sup'] > 0 else 0
             if d['rsi'] < 35 and dist_s < 5: r_st, r_c, r_rs = "🎯 MUA MẠNH NHẤT", "#3fb950", f"Hội tụ RSI thấp ({d['rsi']:.1f}) + Sát Hỗ trợ"
             elif d['rsi'] > 70: r_st, r_c, r_rs = "✋ QUÁ MUA - ĐỨNG NGOÀI", "#f85149", f"Thị trường quá nóng (RSI: {d['rsi']:.1f})"
-            else: r_st, r_c, r_rs = "⌛ CHỜ ĐỢI", "#8b949e", "Giá vùng trung lập, chưa có biến động mạnh"
+            else: r_st, r_c, r_rs = "⌛ CHỜ ĐỢI", "#8b949e", "Giá vùng trung lập, chưa có tín hiệu mạnh"
             
             h_html = f"""
             <div style="background: #161b22; padding: 25px; border-radius: 20px; border: 2px solid {r_c}; font-family: sans-serif; color: white; margin-bottom: 20px;">
@@ -188,10 +177,11 @@ try:
                     </div>
                     <div style="text-align: right;"><div style="font-size: 46px; font-weight: 900;">${d['cp']:,.2f}</div></div>
                 </div>
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 12px;">
-                    <div><div style="color:#8b949e; font-size:11px;">HỖ TRỢ</div><div style="font-size:22px; font-weight:700; color:#3fb950;">${d['sup']:,.2f}</div></div>
-                    <div><div style="color:#8b949e; font-size:11px;">KHÁNG CỰ</div><div style="font-size:22px; font-weight:700; color:#f85149;">${d['res']:,.2f}</div></div>
-                    <div><div style="color:#8b949e; font-size:11px;">ĐỈNH ATH</div><div style="font-size:22px; font-weight:700; color:#d29922;">${d['ath']:,.2f}</div></div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 12px;">
+                    <div><div style="color:#8b949e; font-size:10px;">VỐN ĐÃ VÀO</div><div style="font-size:18px; font-weight:700; color:#58a6ff;">${d['invested']:,.2f}</div></div>
+                    <div><div style="color:#8b949e; font-size:10px;">HỖ TRỢ</div><div style="font-size:18px; font-weight:700; color:#3fb950;">${d['sup']:,.2f}</div></div>
+                    <div><div style="color:#8b949e; font-size:10px;">KHÁNG CỰ</div><div style="font-size:18px; font-weight:700; color:#f85149;">${d['res']:,.2f}</div></div>
+                    <div><div style="color:#8b949e; font-size:10px;">ĐỈNH ATH</div><div style="font-size:18px; font-weight:700; color:#d29922;">${d['ath']:,.2f}</div></div>
                 </div>
                 <div style="margin-top: 20px; padding: 15px; border-radius: 12px; border-left: 8px solid {r_c}; background: {r_c}15; color: {r_c}; font-weight: 800; font-size: 18px;">
                     TRẠNG THÁI: {r_st} <br><span style="font-size: 14px; font-weight: 400; color: #f0f6fc;">Lý do: {r_rs}</span>
