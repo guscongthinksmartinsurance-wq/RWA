@@ -8,7 +8,7 @@ from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
 import plotly.graph_objects as go
 
-# --- 1. CẤU HÌNH CHIẾN LƯỢC ---
+# --- 1. CHIẾN LƯỢC RWA & NHÓM ---
 RWA_STRATEGY = {
     'LINK':   {'symbol': 'LINK-USD',   'target_w': 35, 'group': 'RWA', 'ath': 52.8}, 
     'ONDO':   {'symbol': 'ONDO-USD',   'target_w': 20, 'group': 'RWA', 'ath': 2.14},
@@ -36,7 +36,7 @@ def get_crypto_news_feed():
         feed = feedparser.parse("https://cointelegraph.com/rss/tag/bitcoin")
         news = [f"🔹 <a href='{e.link}' target='_blank' style='color:#58a6ff;text-decoration:none;'>{e.title}</a>" for e in feed.entries[:3]]
         return "<br>".join(news)
-    except: return "⚠️ Đang kết nối nguồn tin thế giới..."
+    except: return "⚠️ Đang kết nối News..."
 
 def analyze_advanced_logic(df, cp, days_sel, has_holdings, pnl_pct):
     delta = df['Close'].diff()
@@ -52,19 +52,19 @@ def analyze_advanced_logic(df, cp, days_sel, has_holdings, pnl_pct):
     
     score = 0
     checks = []
-    if rsi < 35: score += 1; checks.append(f"✅ RSI thấp ({rsi:.1f})")
+    if rsi < 35: score += 1; checks.append(f"✅ RSI LOW ({rsi:.1f})")
     else: checks.append(f"❌ RSI ({rsi:.1f})")
-    if cp <= lower_b: score += 1; checks.append(f"✅ BB: Dưới biên")
-    else: checks.append(f"❌ BB: Vùng giữa")
-    if ((cp/sup)-1)*100 < 4: score += 1; checks.append(f"✅ Sát Hỗ trợ (${sup:.2f})")
-    else: checks.append(f"❌ Cách Support {((cp/sup)-1)*100:.1f}%")
-    if vol > 1.5: score += 1; checks.append(f"🐳 Whale Gom (Vol x{vol:.1f})")
-    else: checks.append(f"❌ Vol yếu (x{vol:.1f})")
+    if cp <= lower_b: score += 1; checks.append(f"✅ BB BOTTOM")
+    else: checks.append(f"❌ BB MID")
+    if ((cp/sup)-1)*100 < 4: score += 1; checks.append(f"✅ NEAR SUPPORT")
+    else: checks.append(f"❌ DISTANCE {((cp/sup)-1)*100:.1f}%")
+    if vol > 1.5: score += 1; checks.append(f"🐳 WHALE ACCUMULATION (x{vol:.1f})")
+    else: checks.append(f"❌ WEAK VOL (x{vol:.1f})")
 
-    if rsi > 70 or cp >= upper_b * 0.98: stt, col = "BÁN / CHỐT LỜI", "#f85149"
-    elif score >= 3: stt, col = "MUA MẠNH", "#3fb950"
-    elif score == 2: stt, col = ("DCA THÊM", "#1f6feb") if has_holdings else ("MUA THĂM DÒ", "#58a6ff")
-    else: stt, col = "QUAN SÁT", "#8b949e"
+    if rsi > 70 or cp >= upper_b * 0.98: stt, col = "EXIT / TAKE PROFIT", "#f85149"
+    elif score >= 3: stt, col = "STRONG BUY", "#3fb950"
+    elif score == 2: stt, col = ("DCA BUY", "#1f6feb") if has_holdings else ("SPECULATIVE BUY", "#58a6ff")
+    else: stt, col = "OBSERVE", "#8b949e"
     return rsi, vol, sup, res, stt, col, " | ".join(checks), float(df['High'].max()), cp*1.5, cp*2.0, eff_score
 
 # --- 3. DỮ LIỆU ---
@@ -83,21 +83,20 @@ def load_data():
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     return ws, df
 
-# --- 4. GIAO DIỆN CHÍNH ---
 st.set_page_config(page_title="RWA Elite Terminal", layout="wide")
 ws, df_holdings = load_data()
 f_val, f_class = get_fear_greed_data()
 
 with st.sidebar:
-    st.header("🏢 QUẢN TRỊ")
-    base_budget = st.number_input("VỐN GỐC ($)", value=2000.0)
+    st.header("🏢 MANAGEMENT")
+    base_budget = st.number_input("TOTAL BUDGET ($)", value=2000.0)
     st.divider()
     c_list = sorted(list(set(list(RWA_STRATEGY.keys()) + list(HUNTER_GROUPS.keys()) + df_holdings['Coin'].tolist())))
-    coin_sel = st.selectbox("Chọn mã", ["+ Nhập mã mới..."] + c_list)
-    final_coin = st.text_input("Mã mới").upper() if coin_sel == "+ Nhập mã mới..." else coin_sel
-    with st.form("trade_v12_1"):
-        q, p = st.number_input("Số lượng", min_value=0.0), st.number_input("Giá ($)", min_value=0.0)
-        if st.form_submit_button("XÁC NHẬN"):
+    coin_sel = st.selectbox("Select Asset", ["+ New Asset..."] + c_list)
+    final_coin = st.text_input("New Symbol").upper() if coin_sel == "+ New Asset..." else coin_sel
+    with st.form("trade_v12_2"):
+        q, p = st.number_input("Quantity", min_value=0.0), st.number_input("Price ($)", min_value=0.0)
+        if st.form_submit_button("EXECUTE"):
             if final_coin:
                 row = df_holdings[df_holdings['Coin'] == final_coin]
                 if not row.empty:
@@ -107,11 +106,11 @@ with st.sidebar:
                     ws.update(f"B{ws.find(final_coin).row}:C{ws.find(final_coin).row}", [[t_q, a_e]])
                 else: ws.append_row([final_coin, q, p, 0])
                 st.rerun()
-    days_sel = st.select_slider("Khung Kỹ thuật", options=[7, 30, 90], value=30)
-    st.info(f"🎭 Sợ hãi: {f_class} ({f_val}/100)")
+    days_sel = st.select_slider("Analysis Period", options=[7, 30, 90], value=30)
+    st.info(f"🎭 F&G: {f_class} ({f_val}/100)")
 
-# NEWS CENTER
-st.markdown(f"""<div style="background:#161b22;padding:15px;border-radius:15px;border:1px solid #30363d;margin-bottom:20px;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;font-weight:bold;margin-bottom:8px;">📰 Điểm tin 24h</div><div style="font-size:14px;line-height:1.6;">{get_crypto_news_feed()}</div></div>""", unsafe_allow_html=True)
+# --- DASHBOARD ---
+st.markdown(f"""<div style="background:#161b22;padding:15px;border-radius:15px;border:1px solid #30363d;margin-bottom:20px;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;font-weight:bold;margin-bottom:8px;">📰 24H INTELLIGENCE</div><div style="font-size:14px;line-height:1.6;">{get_crypto_news_feed()}</div></div>""", unsafe_allow_html=True)
 
 all_coins = list(set(list(RWA_STRATEGY.keys()) + df_holdings['Coin'].tolist()))
 tickers = yf.Tickers(" ".join([f"{c}-USD" for c in all_coins if c]))
@@ -131,8 +130,7 @@ for coin in all_coins:
         ath_val = RWA_STRATEGY[coin]['ath'] if coin in RWA_STRATEGY else ath_real
         invested, val = h * e, cp * h
         total_val += val; total_invest += invested
-        
-        group = RWA_STRATEGY[coin]['group'] if coin in RWA_STRATEGY else HUNTER_GROUPS.get(coin, 'Khác')
+        group = RWA_STRATEGY[coin]['group'] if coin in RWA_STRATEGY else HUNTER_GROUPS.get(coin, 'Other')
         risk_audit[group] = risk_audit.get(group, 0) + val
         card = {"coin": coin, "cp": cp, "stt": stt, "col": col, "rs": rs, "invested": invested, "e": e, "pnl": pnl_p, "sup": sup, "res": res, "ath": ath_val, "tp1": tp1, "tp2": tp2, "eff": eff}
         if val > 0: p_labels.append(coin); p_values.append(val)
@@ -142,27 +140,26 @@ for coin in all_coins:
         else: tab2_data.append(card)
     except: continue
 
-# DASHBOARD & RISK
 cash_remain = float(base_budget) - float(total_invest) + total_realized
 p_labels.append("CASH"); p_values.append(max(0, cash_remain))
 c1, c2 = st.columns([3, 1.2])
 with c1:
-    dash_html = f"""<div style="display:flex;gap:15px;margin-bottom:15px;"><div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;">Cash (Vốn + Lãi)</div><div style="color:#58a6ff;font-size:42px;font-weight:900;">${cash_remain:,.0f}</div></div><div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;">PnL</div><div style="color:{'#3fb950' if (total_val-total_invest)>=0 else '#f85149'};font-size:42px;font-weight:900;">${(total_val-total_invest):,.0f}</div></div></div><div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;">Tổng Tài Sản</div><div style="color:white;font-size:48px;font-weight:900;">${(total_val + cash_remain):,.0f}</div></div>"""
+    dash_html = f"""<div style="display:flex;gap:15px;margin-bottom:15px;"><div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;">Liquidity (Cash)</div><div style="color:#58a6ff;font-size:42px;font-weight:900;">${cash_remain:,.0f}</div></div><div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;">PnL (Unrealized)</div><div style="color:{'#3fb950' if (total_val-total_invest)>=0 else '#f85149'};font-size:42px;font-weight:900;">${(total_val-total_invest):,.0f}</div></div></div><div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;">Total Asset Value</div><div style="color:white;font-size:48px;font-weight:900;">${(total_val + cash_remain):,.0f}</div></div>"""
     components.html(dash_html, height=320)
     for g, v in risk_audit.items():
-        if (v / (total_val + 1e-10)) * 100 > 50: st.warning(f"⚠️ Nhóm {g} chiếm >50% danh mục")
+        if (v / (total_val + 1e-10)) * 100 > 50: st.warning(f"⚠️ Concentration Risk: {g} exceeds 50% of portfolio")
 
 with c2:
     fig = go.Figure(data=[go.Pie(labels=p_labels, values=p_values, hole=.5)])
     fig.update_layout(margin=dict(t=10,b=10,l=10,r=10), height=320, paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-# --- TAB RENDER (7 CỘT TINH GỌN) ---
-t1, t2 = st.tabs(["🛡️ CHIẾN LƯỢC RWA", "🔍 MÁY QUÉT HUNTER"])
-def render_v12_1(data, is_rwa):
+# --- RENDER V12.2 ---
+t1, t2 = st.tabs(["🛡️ STRATEGIC RWA", "🔍 HUNTER SCANNER"])
+def render_v12_2(data, is_rwa):
     for d in data:
         eff_color = "#3fb950" if d['eff'] > 1.5 else ("#d29922" if d['eff'] > 0 else "#8b949e")
-        progress = f"""<div style="font-size:12px;color:#8b949e;margin-bottom:8px;">Tiến độ: <b>{d['rw']:.1f}%</b> / {d['tw']}% | <span style="color:{eff_color}">Hiệu quả: {d['eff']:.1f}</span></div><div style="background:#30363d;border-radius:10px;height:8px;width:100%;"><div style="background:#1f6feb;height:100%;border-radius:10px;width:{d['fill']}%;"></div></div>""" if is_rwa else f"""<div style="font-size:12px;color:{eff_color};margin-bottom:8px;">Hiệu quả: {d['eff']:.1f}</div>"""
+        progress = f"""<div style="font-size:12px;color:#8b949e;margin-bottom:8px;">Weight: <b>{d['rw']:.1f}%</b> / {d['tw']}% | <span style="color:{eff_color}">Efficiency: {d['eff']:.1f}</span></div><div style="background:#30363d;border-radius:10px;height:8px;width:100%;"><div style="background:#1f6feb;height:100%;border-radius:10px;width:{d['fill']}%;"></div></div>""" if is_rwa else f"""<div style="font-size:12px;color:{eff_color};margin-bottom:8px;">EFFICIENCY SCORE: {d['eff']:.1f}</div>"""
         html = f"""
         <div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;font-family:sans-serif;color:white;margin-bottom:20px;">
             <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -170,10 +167,10 @@ def render_v12_1(data, is_rwa):
                 <div style="text-align:right;"><div style="font-size:46px;font-weight:900;">${d['cp']:.3f}</div><div style="color:{'#3fb950' if d['pnl']>=0 else '#f85149'};font-size:22px;font-weight:800;">{d['pnl']:+.1f}%</div></div>
             </div>
             <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;text-align:center;background:rgba(0,0,0,0.3);padding:20px;border-radius:15px;margin-top:20px;">
-                <div><div style="color:#8b949e;font-size:10px;text-transform:uppercase;">Vốn</div><div style="font-size:15px;font-weight:700;color:#58a6ff;">${d['invested']:,.0f}</div></div>
+                <div><div style="color:#8b949e;font-size:10px;text-transform:uppercase;">INVESTED</div><div style="font-size:15px;font-weight:700;color:#58a6ff;">${d['invested']:,.0f}</div></div>
                 <div><div style="color:#8b949e;font-size:10px;text-transform:uppercase;">AVG</div><div style="font-size:15px;font-weight:700;">${d['e']:.3f}</div></div>
-                <div><div style="color:#8b949e;font-size:10px;text-transform:uppercase;">Hỗ trợ</div><div style="font-size:15px;font-weight:700;color:#3fb950;">${d['sup']:.3f}</div></div>
-                <div><div style="color:#8b949e;font-size:10px;text-transform:uppercase;">Kháng cự</div><div style="font-size:15px;font-weight:700;color:#f85149;">${d['res']:.3f}</div></div>
+                <div><div style="color:#8b949e;font-size:10px;text-transform:uppercase;">SUPPORT</div><div style="font-size:15px;font-weight:700;color:#3fb950;">${d['sup']:.3f}</div></div>
+                <div><div style="color:#8b949e;font-size:10px;text-transform:uppercase;">RESISTANCE</div><div style="font-size:15px;font-weight:700;color:#f85149;">${d['res']:.3f}</div></div>
                 <div><div style="color:#8b949e;font-size:10px;text-transform:uppercase;">ATH</div><div style="font-size:15px;font-weight:700;color:#d29922;">${d['ath']:.1f}</div></div>
                 <div><div style="color:#8b949e;font-size:10px;text-transform:uppercase;">TP1</div><div style="font-size:15px;font-weight:700;color:#3fb950;">${d['tp1']:.2f}</div></div>
                 <div><div style="color:#8b949e;font-size:10px;text-transform:uppercase;">TP2</div><div style="font-size:15px;font-weight:700;color:#d29922;">${d['tp2']:.2f}</div></div>
@@ -184,5 +181,5 @@ def render_v12_1(data, is_rwa):
         </div>"""
         components.html(html, height=410)
 
-with t1: render_v12_1(tab1_data, True)
-with t2: render_v12_1(tab2_data, False)
+with t1: render_v12_2(tab1_data, True)
+with t2: render_v12_2(tab2_data, False)
