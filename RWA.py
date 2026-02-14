@@ -24,8 +24,8 @@ def get_fear_greed():
         return r['data'][0]['value'], r['data'][0]['value_classification']
     except: return "50", "Neutral"
 
-# --- 2. LOGIC CHECKLIST KỸ THUẬT ---
-def analyze_checklist(df, cp, days_sel):
+# --- 2. LOGIC CHECKLIST & TRẠNG THÁI THÔNG MINH ---
+def analyze_smart_stt(df, cp, days_sel, has_holdings):
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -39,25 +39,22 @@ def analyze_checklist(df, cp, days_sel):
     
     score = 0
     checks = []
-    
     if rsi < 35: score += 1; checks.append(f"✅ RSI: {rsi:.1f}")
     else: checks.append(f"❌ RSI: {rsi:.1f}")
-    
     if cp <= lower_b: score += 1; checks.append(f"✅ BB: Dưới biên (${lower_b:.2f})")
     else: checks.append(f"❌ BB: Cách biên dưới (${(cp-lower_b):.2f})")
-    
     dist_s = ((cp/sup)-1)*100
     if dist_s < 4: score += 1; checks.append(f"✅ Support: Sát đáy (${sup:.2f})")
     else: checks.append(f"❌ Support: Cách {dist_s:.1f}%")
-    
     if vol > 1.2: score += 1; checks.append(f"✅ Vol: Dòng tiền vào (x{vol:.1f})")
     else: checks.append(f"❌ Vol: Yếu (x{vol:.1f})")
 
-    # TRẠNG THÁI TINH GỌN (BỎ CHỮ ĐỀ XUẤT)
-    if cp >= upper_b * 0.98 or rsi > 70: stt, col = "🚀 BÁN / CHỐT LỜI", "#f85149"
-    elif score >= 3: stt, col = "🛒 MUA MẠNH", "#3fb950"
-    elif score == 2: stt, col = "🛡️ DCA THÊM", "#1f6feb"
-    else: stt, col = "⌛ QUAN SÁT", "#8b949e"
+    # LOGIC TRẠNG THÁI DỰA TRÊN VỊ THẾ
+    if cp >= upper_b * 0.98 or rsi > 70: stt, col = "BÁN / CHỐT LỜI", "#f85149"
+    elif score >= 3: stt, col = "MUA MẠNH", "#3fb950"
+    elif score == 2:
+        stt, col = ("DCA THÊM", "#1f6feb") if has_holdings else ("MUA THĂM DÒ", "#58a6ff")
+    else: stt, col = "QUAN SÁT", "#8b949e"
     
     return rsi, vol, sup, res, stt, col, " | ".join(checks), float(df['High'].max())
 
@@ -84,36 +81,33 @@ with st.sidebar:
     st.header("🏢 QUẢN TRỊ")
     budget = st.number_input("TỔNG VỐN DỰ KIẾN ($)", value=2000.0)
     st.divider()
-    
-    # --- SIDEBAR GỘP (ALL-IN-ONE) ---
     st.write("🏢 **TRẠM DCA**")
     c_list = sorted(list(set(["BTC", "ETH", "SOL", "LINK", "ONDO", "QNT", "PENDLE", "CFG"] + df_holdings['Coin'].tolist())))
     coin_sel = st.selectbox("Chọn mã có sẵn", ["+ Nhập mã mới..."] + c_list)
     
     final_coin = ""
     if coin_sel == "+ Nhập mã mới...":
-        final_coin = st.text_input("Nhập mã Coin mới (VD: SOL, PEPE)").upper()
+        final_coin = st.text_input("Mã Coin mới (VD: SOL, PEPE)").upper()
     else:
         final_coin = coin_sel
 
-    with st.form("dca_final"):
+    with st.form("dca_v6"):
         q_add = st.number_input("Số lượng mua", min_value=0.0)
         p_add = st.number_input("Giá mua ($)", min_value=0.0)
-        if st.form_submit_button("XÁC NHẬN CẬP NHẬT"):
+        if st.form_submit_button("XÁC NHẬN"):
             if final_coin:
                 row = df_holdings[df_holdings['Coin'] == final_coin]
                 if not row.empty:
                     old_q, old_e = float(row['Holdings'].values[0]), float(row['Entry_Price'].values[0])
-                    t_q = old_q + q_add
-                    a_e = ((old_q * old_e) + (q_add * p_add)) / t_q if t_q > 0 else 0
+                    t_q, a_e = old_q + q_add, ((old_q * old_e) + (q_add * p_add)) / (old_q + q_add) if (old_q + q_add) > 0 else 0
                     cell = ws.find(final_coin); ws.update(f"B{cell.row}:C{cell.row}", [[t_q, a_e]])
                 else: ws.append_row([final_coin, q_add, p_add])
                 st.rerun()
     
-    days_sel = st.select_slider("Khung Kỹ thuật (Ngày)", options=[7, 30, 90], value=30)
-    st.info(f"🎭 Tâm lý thị trường: {f_class} ({f_val}/100)")
+    days_sel = st.select_slider("Khung Kỹ thuật", options=[7, 30, 90], value=30)
+    st.info(f"🎭 Tâm lý: {f_class} ({f_val}/100)")
 
-# XỬ LÝ DỮ LIỆU THỊ TRƯỜNG
+# PHÂN TÍCH
 all_coins = list(set(list(RWA_STRATEGY.keys()) + df_holdings['Coin'].tolist()))
 tickers = yf.Tickers(" ".join([f"{c}-USD" for c in all_coins if c]))
 total_val, total_invest = 0, 0
@@ -125,9 +119,10 @@ for coin in all_coins:
         symbol = f"{coin}-USD"
         df_h = tickers.tickers[symbol].history(period="60d")
         cp = float(tickers.tickers[symbol].fast_info['last_price'])
-        rsi, vol, sup, res, stt, col, rs, ath = analyze_checklist(df_h, cp, days_sel)
         u_row = df_holdings[df_holdings['Coin'] == coin]
         h, e = (float(u_row['Holdings'].values[0]), float(u_row['Entry_Price'].values[0])) if not u_row.empty else (0.0, 0.0)
+        
+        rsi, vol, sup, res, stt, col, rs, ath = analyze_smart_stt(df_h, cp, days_sel, h > 0)
         invested = h * e; val = cp * h
         total_val += val; total_invest += invested
         
@@ -144,54 +139,21 @@ for coin in all_coins:
 pnl_total = total_val - total_invest
 p_labels.append("CASH"); p_values.append(max(0, budget - total_invest))
 
-top_col1, top_col2 = st.columns([3, 1])
-with top_col1:
-    dash_html = f"""
-    <div style="display:flex;gap:15px;font-family:sans-serif;margin-bottom:15px;">
-        <div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;">
-            <div style="color:#8b949e;font-size:12px;text-transform:uppercase;">Cash Còn Lại</div>
-            <div style="color:#58a6ff;font-size:42px;font-weight:900;">${(budget-total_invest):,.2f}</div>
-        </div>
-        <div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;">
-            <div style="color:#8b949e;font-size:12px;text-transform:uppercase;">Lời / Lỗ</div>
-            <div style="color:{'#3fb950' if pnl_total>=0 else '#f85149'};font-size:42px;font-weight:900;">${pnl_total:,.2f}</div>
-        </div>
-    </div>
-    <div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;">
-        <div style="color:#8b949e;font-size:12px;text-transform:uppercase;">Tổng Giá Trị Tài Sản</div>
-        <div style="color:white;font-size:48px;font-weight:900;">${total_val:,.2f}</div>
-    </div>
-    """
+col_d1, col_d2 = st.columns([3, 1.2])
+with col_d1:
+    dash_html = f"""<div style="display:flex;gap:15px;font-family:sans-serif;margin-bottom:15px;"><div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;">Cash</div><div style="color:#58a6ff;font-size:42px;font-weight:900;">${(budget-total_invest):,.2f}</div></div><div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;">PnL</div><div style="color:{'#3fb950' if pnl_total>=0 else '#f85149'};font-size:42px;font-weight:900;">${pnl_total:,.2f}</div></div></div><div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;text-transform:uppercase;">Tổng Tài Sản</div><div style="color:white;font-size:48px;font-weight:900;">${total_val:,.2f}</div></div>"""
     components.html(dash_html, height=320)
-
-with top_col2:
+with col_d2:
     fig = go.Figure(data=[go.Pie(labels=p_labels, values=p_values, hole=.5, textinfo='percent')])
     fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=320, paper_bgcolor='rgba(0,0,0,0)', showlegend=False, font=dict(color="white"))
     st.plotly_chart(fig, use_container_width=True)
 
-# --- TABS ---
 t1, t2 = st.tabs(["🛡️ CHIẾN LƯỢC RWA", "🔍 MÁY QUÉT HUNTER"])
-def render_master(data, is_rwa):
+def render_v6(data, is_rwa):
     for d in data:
         progress = f"""<div style="font-size:12px;color:#8b949e;margin-bottom:8px;">Tiến độ: <b>{d['rw']:.1f}%</b> / {d['tw']}%</div><div style="background:#30363d;border-radius:10px;height:8px;width:100%;"><div style="background:#1f6feb;height:100%;border-radius:10px;width:{d['fill']}%;"></div></div>""" if is_rwa else ""
-        html = f"""
-        <div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;font-family:sans-serif;color:white;margin-bottom:20px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <div style="width:50%;"><div style="font-size:36px;font-weight:900;color:#58a6ff;">{d['coin']}</div>{progress}</div>
-                <div style="text-align:right;"><div style="font-size:46px;font-weight:900;">${d['cp']:.3f}</div><div style="color:{'#3fb950' if d['pnl']>=0 else '#f85149'};font-size:22px;font-weight:800;">{d['pnl']:+.1f}%</div></div>
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;text-align:center;background:rgba(0,0,0,0.3);padding:20px;border-radius:15px;margin-top:20px;">
-                <div><div style="color:#8b949e;font-size:10px;">VỐN VÀO</div><div style="font-size:18px;font-weight:700;color:#58a6ff;">${d['invested']:,.0f}</div></div>
-                <div><div style="color:#8b949e;font-size:10px;">VỐN AVG</div><div style="font-size:18px;font-weight:700;">${d['e']:.3f}</div></div>
-                <div><div style="color:#8b949e;font-size:10px;">🛡️ HỖ TRỢ</div><div style="font-size:18px;font-weight:700;color:#3fb950;">${d['sup']:.3f}</div></div>
-                <div><div style="color:#8b949e;font-size:10px;">⛔ KHÁNG CỰ</div><div style="font-size:18px;font-weight:700;color:#f85149;">${d['res']:.3f}</div></div>
-                <div><div style="color:#8b949e;font-size:10px;">🏆 ATH</div><div style="font-size:18px;font-weight:700;color:#d29922;">${d['ath']:.1f}</div></div>
-            </div>
-            <div style="margin-top:20px;padding:15px;border-radius:12px;border-left:8px solid {d['col']};background:{d['col']}15;color:{d['col']};font-weight:800;font-size:18px;">
-                {d['stt']}<br><span style="font-size:13px;font-weight:400;color:#f0f6fc;">{d['rs']}</span>
-            </div>
-        </div>"""
+        html = f"""<div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;font-family:sans-serif;color:white;margin-bottom:20px;"><div style="display:flex;justify-content:space-between;align-items:center;"><div style="width:50%;"><div style="font-size:36px;font-weight:900;color:#58a6ff;">{d['coin']}</div>{progress}</div><div style="text-align:right;"><div style="font-size:46px;font-weight:900;">${d['cp']:.3f}</div><div style="color:{'#3fb950' if d['pnl']>=0 else '#f85149'};font-size:22px;font-weight:800;">{d['pnl']:+.1f}%</div></div></div><div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;text-align:center;background:rgba(0,0,0,0.3);padding:20px;border-radius:15px;margin-top:20px;"><div><div style="color:#8b949e;font-size:10px;">VỐN VÀO</div><div style="font-size:18px;font-weight:700;color:#58a6ff;">${d['invested']:,.0f}</div></div><div><div style="color:#8b949e;font-size:10px;">AVG</div><div style="font-size:18px;font-weight:700;">${d['e']:.3f}</div></div><div><div style="color:#8b949e;font-size:10px;">HỖ TRỢ</div><div style="font-size:18px;font-weight:700;color:#3fb950;">${d['sup']:.3f}</div></div><div><div style="color:#8b949e;font-size:10px;">KHÁNG CỰ</div><div style="font-size:18px;font-weight:700;color:#f85149;">${d['res']:.3f}</div></div><div><div style="color:#8b949e;font-size:10px;">ATH</div><div style="font-size:18px;font-weight:700;color:#d29922;">${d['ath']:.1f}</div></div></div><div style="margin-top:20px;padding:15px;border-radius:12px;border-left:8px solid {d['col']};background:{d['col']}15;color:{d['col']};font-weight:800;font-size:18px;">{d['stt']}<br><span style="font-size:13px;font-weight:400;color:#f0f6fc;">{d['rs']}</span></div></div>"""
         components.html(html, height=410)
 
-with t1: render_master(tab1_data, True)
-with t2: render_master(tab2_data, False)
+with t1: render_v6(tab1_data, True)
+with t2: render_v6(tab2_data, False)
