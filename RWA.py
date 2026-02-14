@@ -24,7 +24,7 @@ def get_fear_greed():
         return r['data'][0]['value'], r['data'][0]['value_classification']
     except: return "50", "Neutral"
 
-# --- 2. BỘ NÃO PHÂN TÍCH CHECKLIST ---
+# --- 2. LOGIC CHECKLIST KỸ THUẬT ---
 def analyze_checklist(df, cp, days_sel):
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -40,7 +40,6 @@ def analyze_checklist(df, cp, days_sel):
     score = 0
     checks = []
     
-    # Check 4 chỉ số (Dùng icon Xanh/Đỏ)
     if rsi < 35: score += 1; checks.append(f"✅ RSI: {rsi:.1f}")
     else: checks.append(f"❌ RSI: {rsi:.1f}")
     
@@ -54,11 +53,11 @@ def analyze_checklist(df, cp, days_sel):
     if vol > 1.2: score += 1; checks.append(f"✅ Vol: Dòng tiền vào (x{vol:.1f})")
     else: checks.append(f"❌ Vol: Yếu (x{vol:.1f})")
 
-    # Đề xuất trạng thái
-    if cp >= upper_b * 0.98 or rsi > 70: stt, col = "🚀 ĐỀ XUẤT: BÁN / CHỐT LỜI", "#f85149"
-    elif score >= 3: stt, col = "🛒 ĐỀ XUẤT: MUA MẠNH", "#3fb950"
-    elif score == 2: stt, col = "🛡️ ĐỀ XUẤT: DCA THÊM", "#1f6feb"
-    else: stt, col = "⌛ ĐỀ XUẤT: QUAN SÁT", "#8b949e"
+    # TRẠNG THÁI TINH GỌN (BỎ CHỮ ĐỀ XUẤT)
+    if cp >= upper_b * 0.98 or rsi > 70: stt, col = "🚀 BÁN / CHỐT LỜI", "#f85149"
+    elif score >= 3: stt, col = "🛒 MUA MẠNH", "#3fb950"
+    elif score == 2: stt, col = "🛡️ DCA THÊM", "#1f6feb"
+    else: stt, col = "⌛ QUAN SÁT", "#8b949e"
     
     return rsi, vol, sup, res, stt, col, " | ".join(checks), float(df['High'].max())
 
@@ -85,17 +84,19 @@ with st.sidebar:
     st.header("🏢 QUẢN TRỊ")
     budget = st.number_input("TỔNG VỐN DỰ KIẾN ($)", value=2000.0)
     st.divider()
-    # Sidebar gộp ô: Chọn mã hoặc gõ mã mới cùng lúc
+    
+    # --- SIDEBAR GỘP (ALL-IN-ONE) ---
     st.write("🏢 **TRẠM DCA**")
     c_list = sorted(list(set(["BTC", "ETH", "SOL", "LINK", "ONDO", "QNT", "PENDLE", "CFG"] + df_holdings['Coin'].tolist())))
-    coin_input = st.selectbox("Chọn mã có sẵn", ["+ Nhập mã mới..."] + c_list)
+    coin_sel = st.selectbox("Chọn mã có sẵn", ["+ Nhập mã mới..."] + c_list)
     
-    if coin_input == "+ Nhập mã mới...":
-        final_coin = st.text_input("Nhập mã Coin mới (VD: PEPE)").upper()
+    final_coin = ""
+    if coin_sel == "+ Nhập mã mới...":
+        final_coin = st.text_input("Nhập mã Coin mới (VD: SOL, PEPE)").upper()
     else:
-        final_coin = coin_input
+        final_coin = coin_sel
 
-    with st.form("dca_fix"):
+    with st.form("dca_final"):
         q_add = st.number_input("Số lượng mua", min_value=0.0)
         p_add = st.number_input("Giá mua ($)", min_value=0.0)
         if st.form_submit_button("XÁC NHẬN CẬP NHẬT"):
@@ -139,7 +140,7 @@ for coin in all_coins:
         else: tab2_data.append(card)
     except: continue
 
-# --- DASHBOARD TỔNG (KHÔI PHỤC THIẾT KẾ ĐEN) ---
+# --- DASHBOARD TỔNG ---
 pnl_total = total_val - total_invest
 p_labels.append("CASH"); p_values.append(max(0, budget - total_invest))
 
