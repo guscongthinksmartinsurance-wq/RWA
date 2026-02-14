@@ -50,12 +50,30 @@ def get_levels(symbol, days):
 # --- GIAO DIỆN ---
 st.set_page_config(page_title="RWA Elite Terminal", layout="wide")
 
-# ÉP KIỂU CHO DASHBOARD TỔNG CHUYÊN NGHIỆP HƠN
+# PHẦN NÀY LÀ LINH HỒN ĐỂ ÉP 3 Ô METRIC HIỂN THỊ CHUYÊN NGHIỆP
 st.markdown("""
 <style>
-    [data-testid="stMetricValue"] { font-size: 48px !important; font-weight: 900 !important; color: #ffffff !important; }
-    [data-testid="stMetricLabel"] { font-size: 14px !important; color: #8b949e !important; text-transform: uppercase; letter-spacing: 1px; }
-    [data-testid="stMetricDelta"] { font-size: 20px !important; font-weight: bold !important; }
+    /* Ép cỡ chữ và màu sắc cho Dashboard tổng */
+    [data-testid="stMetricValue"] {
+        font-size: 52px !important;
+        font-weight: 900 !important;
+        color: #ffffff !important;
+        text-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 16px !important;
+        color: #8b949e !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+    }
+    /* Làm đẹp các khối Metric */
+    [data-testid="stMetric"] {
+        background: #161b22;
+        padding: 20px;
+        border-radius: 15px;
+        border: 1px solid #30363d;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -73,13 +91,14 @@ try:
                 if not row.empty:
                     old_q, old_e = float(row['Holdings'].values[0]), float(row['Entry_Price'].values[0])
                     new_q = old_q + q_add
-                    new_e = ((old_q * old_e) + (q_add * p_add)) / new_q
+                    new_e = ((old_q * old_e) + (q_add * p_add)) / (old_q + q_add)
                     cell = ws.find(c_sel)
                     ws.update(f"B{cell.row}:C{cell.row}", [[new_q, new_e]])
                 else: ws.append_row([c_sel, q_add, p_add])
                 st.rerun()
         days_sel = st.select_slider("Khung Kỹ thuật (Ngày)", options=[7, 30, 90], value=30)
 
+    # XỬ LÝ DỮ LIỆU
     tickers = yf.Tickers(" ".join([cfg['symbol'] for cfg in RWA_STRATEGY.values()]))
     total_val, total_invest = 0, 0
     processed = []
@@ -94,6 +113,7 @@ try:
         total_invest += (e * h)
         pnl = ((cp / e) - 1) * 100 if e > 0 else 0
         sup, res = get_levels(cfg['symbol'], days_sel)
+        
         if cp > 0:
             if cp <= sup * 1.02: rec, col, reason = "NÊN MUA MẠNH", "#3fb950", f"Chạm Hỗ trợ {days_sel}d (${sup:.3f})"
             elif cfg['v2'][0] <= cp <= cfg['v2'][1]: rec, col, reason = "VÙNG GOM 2", "#3fb950", "Vùng gom chiến lược 2"
@@ -101,22 +121,23 @@ try:
             elif cp >= res * 0.98: rec, col, reason = "ĐỢI ĐIỀU CHỈNH", "#f85149", f"Sát Kháng cự {days_sel}d (${res:.3f})"
             else: rec, col, reason = "QUAN SÁT", "#8b949e", "Chưa có tín hiệu rõ ràng"
         else: rec, col, reason = "ĐANG TẢI", "#30363d", "Đang kết nối sàn..."
+
         processed.append({"coin": coin, "cp": cp, "val": val, "h": h, "e": e, "pnl": pnl, "rec": rec, "col": col, "reason": reason, "ath": cfg['ath'], "sup": sup, "res": res, "tw": cfg['target_w']})
 
-    # --- DASHBOARD TỔNG: ĐÃ ĐƯỢC TỐI ƯU ---
-    st.title("🛡️ RWA Intelligence Terminal - 2026")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("TỔNG GIÁ TRỊ TÀI SẢN", f"${total_val:,.2f}")
+    # --- 3 Ô METRIC: DASHBOARD TỔNG TỐI ƯU ---
+    st.markdown("### 📊 HỆ THỐNG QUẢN TRỊ TÀI SẢN RWA")
+    m_col1, m_col2, m_col3 = st.columns(3)
+    m_col1.metric("VỐN GIẢI NGÂN", f"${total_invest:,.2f}")
     
-    # Tính toán lời lỗ tổng để hiện màu sắc chuyên nghiệp
     total_pnl_val = total_val - total_invest
     total_pnl_pct = (total_pnl_val / total_invest * 100) if total_invest > 0 else 0
-    m2.metric("LỜI / LỖ TỔNG", f"${total_pnl_val:,.2f}", f"{total_pnl_pct:.1f}%")
+    m_col2.metric("LỜI / LỖ TỔNG", f"${total_pnl_val:,.2f}", f"{total_pnl_pct:.1f}%")
     
-    m3.metric("CHIẾN THUẬT QUÉT", f"{days_sel} NGÀY")
+    m_col3.metric("TỔNG GIÁ TRỊ", f"${total_val:,.2f}")
 
     st.markdown("---")
 
+    # GIỮ NGUYÊN 100% CARDS CỦA ANH NHƯ TRONG HÌNH ẢNH CUỐI CÙNG
     for d in processed:
         rw = (d['val']/total_val*100) if total_val > 0 else 0
         fill = min(rw / d['tw'], 1.0) * 100
@@ -150,7 +171,7 @@ try:
             </div>
         </div>
         """
-        components.html(html_code, height=420)
+        st.components.v1.html(html_code, height=420)
 
 except Exception as e:
     st.info("Chào anh Công! Hãy thực hiện lệnh nhập DCA đầu tiên ở Sidebar.")
