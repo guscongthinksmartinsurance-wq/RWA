@@ -54,9 +54,8 @@ try:
     ws, df_holdings = load_data()
     
     with st.sidebar:
-        st.header("⚙️ CÀI ĐẶT HỆ THỐNG")
-        # ĐÂY LÀ CHỖ ĐỂ TÍNH TỶ TRỌNG CHUẨN
-        total_budget = st.number_input("TỔNG VỐN DỰ KIẾN ($)", min_value=1.0, value=1000.0, step=100.0)
+        st.header("💰 QUẢN TRỊ VỐN")
+        total_budget = st.number_input("TỔNG VỐN CHIẾN DỊCH ($)", min_value=10.0, value=2000.0, step=100.0)
         
         st.divider()
         st.header("🏢 TRẠM DCA")
@@ -64,14 +63,14 @@ try:
             c_sel = st.selectbox("Chọn Coin", list(RWA_STRATEGY.keys()))
             q_add = st.number_input("Số lượng mua", min_value=0.0, step=0.1)
             p_add = st.number_input("Giá lúc mua ($)", min_value=0.0, step=0.01)
-            if st.form_submit_button("XÁC NHẬN LỆNH"):
+            if st.form_submit_button("GHI ĐÈ LỆNH MỚI"):
                 row = df_holdings[df_holdings['Coin'] == c_sel]
                 if not row.empty:
                     old_q, old_e = float(row['Holdings'].values[0]), float(row['Entry_Price'].values[0])
-                    new_q = old_q + q_add
-                    new_e = ((old_q * old_e) + (q_add * p_add)) / (old_q + q_add) if (old_q + q_add) > 0 else 0
+                    total_q = old_q + q_add
+                    avg_e = ((old_q * old_e) + (q_add * p_add)) / total_q if total_q > 0 else 0
                     cell = ws.find(c_sel)
-                    ws.update(f"B{cell.row}:C{cell.row}", [[new_q, new_e]])
+                    ws.update(f"B{cell.row}:C{cell.row}", [[total_q, avg_e]])
                 else: ws.append_row([c_sel, q_add, p_add])
                 st.rerun()
         days_sel = st.select_slider("Khung Kỹ thuật (Ngày)", options=[7, 30, 90], value=30)
@@ -86,44 +85,47 @@ try:
         except: cp = 0.0
         user_row = df_holdings[df_holdings['Coin'] == coin] if not df_holdings.empty else pd.DataFrame()
         h, e = (float(user_row['Holdings'].values[0]), float(user_row['Entry_Price'].values[0])) if not user_row.empty else (0.0, 0.0)
+        
         val = cp * h
         total_val += val
         total_invest += (e * h)
         pnl = ((cp / e) - 1) * 100 if e > 0 else 0
         sup, res = get_levels(cfg['symbol'], days_sel)
         
-        # Tỷ trọng tính trên TỔNG VỐN DỰ KIẾN (Budget)
+        # Tỷ trọng trên vốn dự kiến
         rw = (val / total_budget * 100)
         fill = min(rw / cfg['target_w'], 1.0) * 100
+
+        # Khoảng cách so với Entry (DCA Gap)
+        gap = ((cp / e) - 1) * 100 if e > 0 else 0
 
         if cp > 0:
             if cp <= sup * 1.02: rec, col, reason = "NÊN MUA MẠNH", "#3fb950", f"Chạm Hỗ trợ {days_sel}d (${sup:.3f})"
             elif cfg['v2'][0] <= cp <= cfg['v2'][1]: rec, col, reason = "VÙNG GOM 2", "#3fb950", "Vùng gom chiến lược 2"
             elif cfg['v1'][0] <= cp <= cfg['v1'][1]: rec, col, reason = "VÙNG GOM 1", "#d29922", "Vùng gom chiến lược 1"
             elif cp >= res * 0.98: rec, col, reason = "ĐỢI ĐIỀU CHỈNH", "#f85149", f"Sát Kháng cự {days_sel}d (${res:.3f})"
-            else: rec, col, reason = "QUAN SÁT", "#8b949e", "Chưa có tín hiệu"
-        else: rec, col, reason = "ĐANG TẢI", "#30363d", "Đang kết nối..."
+            else: rec, col, reason = "QUAN SÁT", "#8b949e", "Chưa có tín hiệu rõ ràng"
+        else: rec, col, reason = "ĐANG TẢI", "#30363d", "Đang kết nối sàn..."
 
-        processed.append({"coin": coin, "cp": cp, "val": val, "h": h, "e": e, "pnl": pnl, "rec": rec, "col": col, "reason": reason, "ath": cfg['ath'], "sup": sup, "res": res, "tw": cfg['target_w'], "rw": rw, "fill": fill})
+        processed.append({"coin": coin, "cp": cp, "val": val, "h": h, "e": e, "pnl": pnl, "gap": gap, "rec": rec, "col": col, "reason": reason, "ath": cfg['ath'], "sup": sup, "res": res, "tw": cfg['target_w'], "rw": rw, "fill": fill})
 
-    # --- ĐỘ LẠI DASHBOARD TỔNG ---
-    total_pnl_val = total_val - total_invest
-    total_pnl_pct = (total_pnl_val / total_invest * 100) if total_invest > 0 else 0
-    pnl_c = "#3fb950" if total_pnl_val >= 0 else "#f85149"
+    # --- DASHBOARD TỔNG ---
+    cash_left = total_budget - total_invest
+    pnl_val = total_val - total_invest
+    pnl_c = "#3fb950" if pnl_val >= 0 else "#f85149"
 
     header_html = f"""
     <div style="display: flex; gap: 15px; font-family: sans-serif; margin-bottom: 20px;">
         <div style="flex: 1; background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; text-align: center;">
-            <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Vốn Đã Vào</div>
-            <div style="color: white; font-size: 38px; font-weight: 900; margin-top: 5px;">${total_invest:,.2f}</div>
+            <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Tiền Mặt Còn Lại (Cash)</div>
+            <div style="color: #58a6ff; font-size: 38px; font-weight: 900; margin-top: 5px;">${cash_left:,.2f}</div>
         </div>
         <div style="flex: 1; background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; text-align: center;">
-            <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Lời / Lỗ</div>
-            <div style="color: {pnl_c}; font-size: 38px; font-weight: 900; margin-top: 5px;">${total_pnl_val:,.2f}</div>
-            <div style="color: {pnl_c}; font-size: 16px; font-weight: 700;">{total_pnl_pct:+.1f}%</div>
+            <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Lời / Lỗ Danh Mục</div>
+            <div style="color: {pnl_c}; font-size: 38px; font-weight: 900; margin-top: 5px;">${pnl_val:,.2f}</div>
         </div>
         <div style="flex: 1; background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; text-align: center;">
-            <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Giá Trị Hiện Tại</div>
+            <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Giá Trị Tài Sản</div>
             <div style="color: white; font-size: 38px; font-weight: 900; margin-top: 5px;">${total_val:,.2f}</div>
         </div>
     </div>
@@ -133,19 +135,23 @@ try:
     st.markdown("---")
 
     for d in processed:
+        # Màu sắc cho GAP
+        gap_info = f"Thấp hơn Entry: {abs(d['gap']):.1f}%" if d['gap'] < 0 else f"Cao hơn Entry: {d['gap']:.1f}%"
+        gap_color = "#3fb950" if d['gap'] < 0 else "#8b949e"
+
         html_card = f"""
         <div style="background: #161b22; padding: 25px; border-radius: 20px; border: 1px solid #30363d; font-family: sans-serif; color: white; margin-bottom: 20px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <div style="width: 55%;">
                     <div style="font-size: 36px; font-weight: 900; color: #58a6ff;">{d['coin']}</div>
-                    <div style="font-size: 14px; color: #8b949e; margin-top: 8px;">Tiến độ mục tiêu: <b>{d['rw']:.2f}%</b> / {d['tw']}%</div>
+                    <div style="font-size: 14px; color: #8b949e; margin-top: 8px;">Tỷ trọng mục tiêu: <b>{d['rw']:.2f}%</b> / {d['tw']}%</div>
                     <div style="background: #30363d; border-radius: 20px; height: 10px; width: 100%; margin-top: 10px;">
                         <div style="background: #1f6feb; height: 100%; border-radius: 20px; width: {d['fill']}%;"></div>
                     </div>
                 </div>
                 <div style="text-align: right;">
                     <div style="font-size: 46px; font-weight: 900; color: #ffffff;">${d['cp']:.3f}</div>
-                    <div style="color:{'#3fb950' if d['pnl']>=0 else '#f85149'}; font-size: 22px; font-weight: 800;">{d['pnl']:+.1f}%</div>
+                    <div style="color:{gap_color}; font-size: 16px; font-weight: 600;">{gap_info}</div>
                 </div>
             </div>
             <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; text-align: center; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 15px;">
@@ -163,4 +169,4 @@ try:
         components.html(html_card, height=380)
 
 except Exception as e:
-    st.info("💡 Chào anh Công! Hãy nhập Tổng vốn và lệnh DCA đầu tiên.")
+    st.info("💡 Hệ thống đã sẵn sàng. Hãy nhập Tổng vốn đầu tư và lệnh đầu tiên.")
