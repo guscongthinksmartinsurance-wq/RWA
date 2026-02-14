@@ -1,11 +1,11 @@
-
 import streamlit as st
 import pandas as pd
 import yfinance as yf
 import gspread
 from google.oauth2.service_account import Credentials
+import streamlit.components.v1 as components
 
-# --- CHIẾN LƯỢC GỐC ---
+# --- CẤU HÌNH CHIẾN LƯỢC ---
 ST_FILE_NAME = "TMC-Sales-Assistant"
 ST_SHEET_NAME = "Holdings"
 HEADERS = ["Coin", "Holdings", "Entry_Price"]
@@ -19,7 +19,7 @@ RWA_STRATEGY = {
     'CFG':    {'symbol': 'CFG-USD',    'target_w': 10, 'v1': (0.32, 0.36), 'v2': (0.22, 0.26), 'ath': 2.59}
 }
 
-# --- KẾT NỐI ---
+# --- KẾT NỐI DỮ LIỆU ---
 @st.cache_resource
 def get_gsheet_client():
     creds_info = st.secrets["gcp_service_account"]
@@ -50,17 +50,6 @@ def get_levels(symbol, days):
 # --- GIAO DIỆN ---
 st.set_page_config(page_title="RWA Elite Terminal", layout="wide")
 
-st.markdown("""
-<style>
-    .main { background-color: #0e1117; }
-    .asset-card { 
-        background: #161b22; padding: 25px; border-radius: 15px; 
-        border: 1px solid #30363d; margin-bottom: 25px; 
-    }
-    .status-box { padding: 12px; border-radius: 10px; font-weight: 800; font-size: 17px; margin-top: 20px; border-left: 8px solid; }
-</style>
-""", unsafe_allow_html=True)
-
 try:
     ws, df_holdings = load_data()
     
@@ -69,13 +58,13 @@ try:
         with st.form("dca"):
             c_sel = st.selectbox("Chọn Coin", list(RWA_STRATEGY.keys()))
             q_add = st.number_input("Số lượng mua", min_value=0.0, step=0.1)
-            p_add = st.number_input("Giá mua ($)", min_value=0.0, step=0.01)
+            p_add = st.number_input("Giá lúc mua ($)", min_value=0.0, step=0.01)
             if st.form_submit_button("XÁC NHẬN LỆNH"):
                 row = df_holdings[df_holdings['Coin'] == c_sel]
                 old_q = float(row['Holdings'].values[0]) if not row.empty else 0
                 old_e = float(row['Entry_Price'].values[0]) if not row.empty else 0
                 new_q = old_q + q_add
-                new_e = ((old_q * old_e) + (q_add * p_add)) / new_q if new_q > 0 else 0
+                new_e = ((old_q * old_e) + (q_add * p_add)) / (old_q + q_add) if (old_q + q_add) > 0 else 0
                 if not row.empty:
                     cell = ws.find(c_sel)
                     ws.update(f"B{cell.row}:C{cell.row}", [[new_q, new_e]])
@@ -83,7 +72,7 @@ try:
                 st.rerun()
         days_sel = st.select_slider("Khung Kỹ thuật (Ngày)", options=[7, 30, 90], value=30)
 
-    # LẤY GIÁ
+    # XỬ LÝ DỮ LIỆU
     tickers = yf.Tickers(" ".join([cfg['symbol'] for cfg in RWA_STRATEGY.values()]))
     total_val, total_invest = 0, 0
     processed = []
@@ -100,10 +89,8 @@ try:
         total_invest += (e * h)
         pnl = ((cp / e) - 1) * 100 if e > 0 else 0
         sup, res = get_levels(cfg['symbol'], days_sel)
-        real_w = (val / total_val * 100) if total_val > 0 else 0
-        fill_pct = min(real_w / cfg['target_w'], 1.0) * 100
-
-        # LOGIC TƯ VẤN
+        
+        # Logic tư vấn
         if cp > 0:
             if cp <= sup * 1.02: rec, col, reason = "NÊN MUA MẠNH", "#3fb950", f"Chạm Hỗ trợ {days_sel}d (${sup:.3f})"
             elif cfg['v2'][0] <= cp <= cfg['v2'][1]: rec, col, reason = "VÙNG GOM 2", "#3fb950", "Vùng gom chiến lược 2"
@@ -115,28 +102,30 @@ try:
         processed.append({
             "coin": coin, "cp": cp, "val": val, "h": h, "e": e, "pnl": pnl, 
             "rec": rec, "col": col, "reason": reason, "ath": cfg['ath'],
-            "sup": sup, "res": res, "tw": cfg['target_w'], "rw": real_w, "fill": fill_pct
+            "sup": sup, "res": res, "tw": cfg['target_w']
         })
 
     # UI CHÍNH
     st.title("🛡️ RWA Intelligence Terminal - 2026")
     m1, m2, m3 = st.columns(3)
-    m1.metric("TỔNG TÀI SẢN (USDT)", f"${total_val:,.2f}")
-    m2.metric("LỜI / LỖ TỔNG", f"${(total_val - total_invest):,.2f}", f"{((total_val/total_invest)-1)*100 if total_invest > 0 else 0:.1f}%")
+    m1.metric("TỔNG TÀI SẢN", f"${total_val:,.2f}")
+    m2.metric("P&L TỔNG", f"${(total_val - total_invest):,.2f}", f"{((total_val/total_invest)-1)*100 if total_invest > 0 else 0:.1f}%")
     m3.metric("KHUNG CHIẾN THUẬT", f"{days_sel} NGÀY")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-
     for d in processed:
-        # Bọc toàn bộ Card vào 1 lệnh st.markdown duy nhất để tránh lỗi hiển thị code
-        st.markdown(f"""
-        <div class="asset-card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
+        # Tỷ trọng thực tế
+        rw = (d['val']/total_val*100) if total_val > 0 else 0
+        fill = min(rw / d['tw'], 1.0) * 100
+        
+        # SỬ DỤNG COMPONENTS ĐỂ ÉP RENDER HTML
+        html_code = f"""
+        <div style="background: #161b22; padding: 25px; border-radius: 20px; border: 1px solid #30363d; font-family: sans-serif; color: white; margin-bottom: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <div style="width: 50%;">
                     <div style="font-size: 38px; font-weight: 900; color: #58a6ff;">{d['coin']}</div>
-                    <div style="font-size: 15px; color: #8b949e; margin-top: 8px;">Tiến độ: <b>{d['rw']:.1f}%</b> / {d['tw']}% mục tiêu</div>
+                    <div style="font-size: 15px; color: #8b949e; margin-top: 8px;">Tiến độ: <b>{rw:.1f}%</b> / {d['tw']}% mục tiêu</div>
                     <div style="background: #30363d; border-radius: 20px; height: 12px; width: 100%; margin-top: 10px;">
-                        <div style="background: #1f6feb; height: 100%; border-radius: 20px; width: {d['fill']}%;"></div>
+                        <div style="background: #1f6feb; height: 100%; border-radius: 20px; width: {fill}%;"></div>
                     </div>
                 </div>
                 <div style="text-align: right;">
@@ -145,23 +134,23 @@ try:
                 </div>
             </div>
             
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; text-align: center; background: rgba(0,0,0,0.3); padding: 25px; border-radius: 15px;">
-                <div><div style="color:#8b949e; font-size:12px; text-transform:uppercase;">Vốn Avg</div><div style="font-size:24px; font-weight:700; color:#fff;">${d['e']:.3f}</div></div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; text-align: center; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 15px;">
+                <div><div style="color:#8b949e; font-size:12px; text-transform:uppercase;">Vốn Avg</div><div style="font-size:24px; font-weight:700;">${d['e']:.3f}</div></div>
                 <div><div style="color:#8b949e; font-size:12px; text-transform:uppercase;">🛡️ Hỗ trợ</div><div style="font-size:24px; font-weight:700; color:#3fb950;">${d['sup']:.3f}</div></div>
                 <div><div style="color:#8b949e; font-size:12px; text-transform:uppercase;">⛔ Kháng cự</div><div style="font-size:24px; font-weight:700; color:#f85149;">${d['res']:.3f}</div></div>
                 <div><div style="color:#8b949e; font-size:12px; text-transform:uppercase;">Đỉnh ATH</div><div style="font-size:24px; font-weight:700; color:#d29922;">${d['ath']}</div></div>
             </div>
             
-            <div class="status-box" style="border-left-color: {d['col']}; background: {d['col']}15; color: {d['col']};">
+            <div style="margin-top: 25px; padding: 15px; border-radius: 12px; border-left: 8px solid {d['col']}; background: {d['col']}15; color: {d['col']}; font-weight: 800; font-size: 18px;">
                 PHÂN TÍCH: {d['rec']} <br>
                 <span style="font-size: 15px; font-weight: 400; color: #f0f6fc;">Lý do: {d['reason']}</span>
             </div>
-            
-            <div style="text-align: right; margin-top: 20px; font-size: 20px; font-weight: 800; color: #8b949e;">
+            <div style="text-align: right; margin-top: 15px; font-size: 18px; font-weight: 700; color: #8b949e;">
                 Giá trị: <span style="color: #ffffff;">${d['val']:,.2f} USDT</span>
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """
+        components.html(html_code, height=420)
 
 except Exception as e:
-    st.info("💡 Chào anh Công! Hãy thực hiện lệnh nhập DCA đầu tiên ở Sidebar.")
+    st.info("Chào anh Công! Hãy thực hiện lệnh nhập DCA đầu tiên ở Sidebar.")
