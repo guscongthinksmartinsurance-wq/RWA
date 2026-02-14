@@ -46,36 +46,17 @@ def get_levels(symbol, days):
         return float(hist['Low'].min()), float(hist['High'].max())
     except: return 0.0, 0.0
 
-# --- GIAO DIỆN PREMIUM ---
+# --- CẤU HÌNH GIAO DIỆN ---
 st.set_page_config(page_title="RWA Elite Terminal", layout="wide")
 
 st.markdown("""
     <style>
-    /* Tổng thể */
     .main { background-color: #0e1117; }
-    
-    /* Asset Card */
-    .asset-card { 
-        background: linear-gradient(145deg, #161b22, #0d1117); 
-        padding: 30px; border-radius: 20px; border: 1px solid #30363d; 
-        margin-bottom: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    [data-testid="stMetricValue"] { font-size: 45px !important; font-weight: 900 !important; color: #ffffff !important; }
+    .asset-container { 
+        background: #161b22; padding: 30px; border-radius: 20px; 
+        border: 1px solid #30363d; margin-bottom: 30px;
     }
-    
-    /* Typography */
-    .coin-name { font-size: 32px !important; font-weight: 800; color: #58a6ff; letter-spacing: 1px; }
-    .price-large { font-size: 36px !important; font-weight: 900; color: #ffffff; text-shadow: 0 0 10px rgba(255,255,255,0.2); }
-    .data-label { color: #8b949e; font-size: 13px; text-transform: uppercase; font-weight: 600; margin-bottom: 5px; }
-    .data-value { font-size: 22px; font-weight: 700; color: #f0f6fc; }
-    
-    /* Trạng thái */
-    .rec-box { padding: 15px; border-radius: 12px; font-weight: bold; margin-top: 20px; border-left: 8px solid; font-size: 16px; }
-    
-    /* Progress Bar */
-    .progress-bg { background: #30363d; border-radius: 20px; height: 12px; width: 100%; margin: 15px 0; overflow: hidden; }
-    .progress-fill { background: linear-gradient(90deg, #1f6feb, #58a6ff); height: 100%; border-radius: 20px; }
-    
-    /* Metrics Top */
-    [data-testid="stMetricValue"] { font-size: 40px !important; font-weight: 900 !important; color: #ffffff !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -88,7 +69,7 @@ try:
             c_sel = st.selectbox("Chọn Coin", list(RWA_STRATEGY.keys()))
             q_add = st.number_input("Số lượng mua", min_value=0.0, step=0.1)
             p_add = st.number_input("Giá lúc mua ($)", min_value=0.0, step=0.01)
-            if st.form_submit_button("XÁC NHẬN LỆNH"):
+            if st.form_submit_button("CẬP NHẬT LỆNH"):
                 row = df_holdings[df_holdings['Coin'] == c_sel]
                 old_q = float(row['Holdings'].values[0]) if not row.empty else 0
                 old_e = float(row['Entry_Price'].values[0]) if not row.empty else 0
@@ -101,38 +82,34 @@ try:
                 st.rerun()
         days_sel = st.select_slider("Khung Kỹ thuật (Ngày)", options=[7, 30, 90], value=30)
 
-    # XỬ LÝ DỮ LIỆU
+    # LẤY GIÁ MỚI
     tickers = yf.Tickers(" ".join([cfg['symbol'] for cfg in RWA_STRATEGY.values()]))
-    processed = []
     total_val, total_invest = 0, 0
+    processed = []
 
-    current_prices = {}
     for coin, cfg in RWA_STRATEGY.items():
-        try: current_prices[coin] = float(tickers.tickers[cfg['symbol']].fast_info['last_price'])
-        except: current_prices[coin] = 0.0
+        try: cp = float(tickers.tickers[cfg['symbol']].fast_info['last_price'])
+        except: cp = 0.0
         h = float(df_holdings[df_holdings['Coin'] == coin]['Holdings'].values[0]) if not df_holdings[df_holdings['Coin'] == coin].empty else 0.0
-        total_val += (current_prices[coin] * h)
-
-    for coin, cfg in RWA_STRATEGY.items():
-        cp = current_prices[coin]
-        sup, res = get_levels(cfg['symbol'], days_sel)
-        user_row = df_holdings[df_holdings['Coin'] == coin] if not df_holdings.empty else pd.DataFrame()
-        h, e = (float(user_row['Holdings'].values[0]), float(user_row['Entry_Price'].values[0])) if not user_row.empty else (0.0, 0.0)
+        e = float(df_holdings[df_holdings['Coin'] == coin]['Entry_Price'].values[0]) if not df_holdings[df_holdings['Coin'] == coin].empty else 0.0
         
         val = cp * h
+        total_val += val
         total_invest += (e * h)
         pnl = ((cp / e) - 1) * 100 if e > 0 else 0
+        
+        sup, res = get_levels(cfg['symbol'], days_sel)
         real_w = (val / total_val * 100) if total_val > 0 else 0
         fill_pct = min(real_w / cfg['target_w'], 1.0) * 100
 
-        # LOGIC TƯ VẤN ĐỊNH LƯỢNG
+        # LOGIC TƯ VẤN
         if cp > 0:
-            if cp <= sup * 1.02: rec, col, reason = "NÊN MUA MẠNH", "#238636", f"Giá sát Hỗ trợ cứng {days_sel}d (${sup:.3f}). Cơ hội DCA."
-            elif cfg['v2'][0] <= cp <= cfg['v2'][1]: rec, col, reason = "VÙNG GOM 2", "#2ea043", "Giá cực tốt, thuộc vùng gom chiến lược 2."
-            elif cfg['v1'][0] <= cp <= cfg['v1'][1]: rec, col, reason = "VÙNG GOM 1", "#d29922", "Giá hợp lý, thuộc vùng gom chiến lược 1."
-            elif cp >= res * 0.98: rec, col, reason = "KHÁNG CỰ - ĐỢI", "#f85149", f"Giá sát Kháng cự {days_sel}d (${res:.3f}). Rủi ro đu đỉnh."
-            else: rec, col, reason = "QUAN SÁT", "#8b949e", "Giá trung lập, chưa có tín hiệu rõ ràng."
-        else: rec, col, reason = "CHỜ DỮ LIỆU", "#30363d", "Đang đồng bộ dữ liệu thị trường..."
+            if cp <= sup * 1.02: rec, col, reason = "NÊN MUA MẠNH", "#3fb950", f"Chạm Hỗ trợ {days_sel}d (${sup:.3f})"
+            elif cfg['v2'][0] <= cp <= cfg['v2'][1]: rec, col, reason = "VÙNG GOM 2", "#3fb950", "Nằm trong vùng gom chiến lược 2"
+            elif cfg['v1'][0] <= cp <= cfg['v1'][1]: rec, col, reason = "VÙNG GOM 1", "#d29922", "Nằm trong vùng gom chiến lược 1"
+            elif cp >= res * 0.98: rec, col, reason = "KHÁNG CỰ - ĐỢI", "#f85149", f"Chạm Kháng cự {days_sel}d (${res:.3f})"
+            else: rec, col, reason = "QUAN SÁT", "#8b949e", "Vùng trung lập, chưa có tín hiệu"
+        else: rec, col, reason = "ĐANG TẢI", "#30363d", "Đang đồng bộ sàn..."
 
         processed.append({
             "coin": coin, "cp": cp, "val": val, "h": h, "e": e, "pnl": pnl, 
@@ -143,49 +120,48 @@ try:
     # UI CHÍNH
     st.title("🛡️ RWA Intelligence Terminal - 2026")
     
-    m_col1, m_col2, m_col3 = st.columns(3)
-    m_col1.metric("TỔNG TÀI SẢN (USDT)", f"${total_val:,.2f}")
-    m_col2.metric("LỜI / LỖ TỔNG", f"${(total_val - total_invest):,.2f}", f"{((total_val/total_invest)-1)*100 if total_invest > 0 else 0:.1f}%")
-    m_col3.metric("KHUNG CHIẾN THUẬT", f"{days_sel} NGÀY")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("TỔNG GIÁ TRỊ", f"${total_val:,.2f}")
+    m2.metric("LỜI / LỖ TỔNG", f"${(total_val - total_invest):,.2f}", f"{((total_val/total_invest)-1)*100 if total_invest > 0 else 0:.1f}%")
+    m3.metric("KHUNG CHIẾN THUẬT", f"{days_sel} NGÀY")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     for d in processed:
+        # Dùng st.markdown với unsafe_allow_html=True để render Card sạch sẽ
         st.markdown(f"""
-        <div class="asset-card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <div style="background: #161b22; padding: 30px; border-radius: 20px; border: 1px solid #30363d; margin-bottom: 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
                 <div style="width: 50%;">
-                    <div class="coin-name">{d['coin']}</div>
-                    <div style="font-size: 14px; color: #8b949e; margin-top: 5px; font-weight: 500;">
-                        Tiến độ mục tiêu: <b>{d['rw']:.1f}%</b> / {d['tw']}% 
+                    <div style="font-size: 34px; font-weight: 800; color: #58a6ff;">{d['coin']}</div>
+                    <div style="font-size: 14px; color: #8b949e; margin-top: 8px;">Tiến độ: <b>{d['rw']:.1f}%</b> / {d['tw']}% mục tiêu</div>
+                    <div style="background: #30363d; border-radius: 20px; height: 12px; width: 100%; margin-top: 10px;">
+                        <div style="background: #1f6feb; height: 100%; border-radius: 20px; width: {d['fill']}%;"></div>
                     </div>
-                    <div class="progress-bg"><div class="progress-fill" style="width: {d['fill']}%;"></div></div>
                 </div>
                 <div style="text-align: right;">
-                    <div class="price-large">${d['cp']:.3f}</div>
-                    <div style="color:{'#3fb950' if d['pnl']>=0 else '#f85149'}; font-size: 20px; font-weight: 800; margin-top: 5px;">
-                        {'+' if d['pnl']>=0 else ''}{d['pnl']:.1f}%
-                    </div>
+                    <div style="font-size: 42px; font-weight: 900; color: #ffffff;">${d['cp']:.3f}</div>
+                    <div style="color:{'#3fb950' if d['pnl']>=0 else '#f85149'}; font-size: 22px; font-weight: 800;">{'+' if d['pnl']>=0 else ''}{d['pnl']:.1f}%</div>
                 </div>
             </div>
             
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; text-align: center; background: rgba(255,255,255,0.03); padding: 20px; border-radius: 12px;">
-                <div><div class="data-label">Vốn Avg</div><div class="data-value">${d['e']:.3f}</div></div>
-                <div><div class="data-label">🛡️ Hỗ trợ</div><div class="data-value" style="color:#3fb950">${d['sup']:.3f}</div></div>
-                <div><div class="data-label">⛔ Kháng cự</div><div class="data-value" style="color:#f85149">${d['res']:.3f}</div></div>
-                <div><div class="data-label">Đỉnh ATH</div><div class="data-value" style="color:#d29922">${d['ath']}</div></div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; text-align: center; background: rgba(0,0,0,0.2); padding: 25px; border-radius: 15px;">
+                <div><div style="color:#8b949e; font-size:12px; text-transform:uppercase;">Vốn Avg</div><div style="font-size:22px; font-weight:700; color:#fff;">${d['e']:.3f}</div></div>
+                <div><div style="color:#8b949e; font-size:12px; text-transform:uppercase;">🛡️ Hỗ trợ</div><div style="font-size:22px; font-weight:700; color:#3fb950;">${d['sup']:.3f}</div></div>
+                <div><div style="color:#8b949e; font-size:12px; text-transform:uppercase;">⛔ Kháng cự</div><div style="font-size:22px; font-weight:700; color:#f85149;">${d['res']:.3f}</div></div>
+                <div><div style="color:#8b949e; font-size:12px; text-transform:uppercase;">Đỉnh ATH</div><div style="font-size:22px; font-weight:700; color:#d29922;">${d['ath']}</div></div>
             </div>
             
-            <div class="rec-box" style="border-left-color: {d['col']}; background: {d['col']}10; color: {d['col']};">
-                PHÂN TÍCH HÀNH VI: {d['rec']} <br>
-                <span style="font-size: 14px; font-weight: 400; color: #f0f6fc; opacity: 0.9;">Hệ thống: {d['reason']}</span>
+            <div style="margin-top: 25px; padding: 15px; border-radius: 12px; border-left: 8px solid {d['col']}; background: {d['col']}15; color: {d['col']}; font-weight: 800; font-size: 18px;">
+                PHÂN TÍCH: {d['rec']} <br>
+                <span style="font-size: 14px; font-weight: 400; color: #f0f6fc;">Lý do: {d['reason']}</span>
             </div>
             
-            <div style="text-align: right; margin-top: 15px; font-size: 16px; font-weight: 600; color: #8b949e;">
-                Giá trị nắm giữ: <span style="color: #ffffff;">${d['val']:,.2f} USDT</span>
+            <div style="text-align: right; margin-top: 20px; font-size: 18px; font-weight: 700; color: #8b949e;">
+                Gía trị nắm giữ: <span style="color: #ffffff;">${d['val']:,.2f} USDT</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
 except Exception as e:
-    st.info("Chào anh Công! Hãy thực hiện lệnh nhập DCA đầu tiên để hệ thống khởi chạy dữ liệu chuyên nghiệp.")
+    st.info("💡 Chào anh Công! Hãy thực hiện lệnh nhập DCA đầu tiên ở Sidebar.")
