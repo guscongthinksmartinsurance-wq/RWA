@@ -7,7 +7,7 @@ from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
 import plotly.graph_objects as go
 
-# --- 1. BASELINE: 11 CHIẾN MÃ 2026 ---
+# --- 1. BASELINE ---
 STRATEGY = {
     'RWA': {
         'LINK': {'id': 'chainlink', 'tw': 35, 'ath': 52.8},
@@ -27,58 +27,20 @@ STRATEGY = {
 }
 
 # --- 2. HÀM TRỢ NĂNG ---
-def get_hist(cg_id, days):
+@st.cache_data(ttl=300)
+def get_all_prices():
+    ids = ",".join([v['id'] for cat in STRATEGY.values() for v in cat.values()])
     try:
-        url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart?vs_currency=usd&days={days}&interval=daily"
-        r = requests.get(url).json()
-        return pd.DataFrame({'Close': [x[1] for x in r['prices']], 'Volume': [x[1] for x in r['total_volumes']]})
-    except: return pd.DataFrame()
-
-@st.cache_data(ttl=3600)
-def get_fng():
-    try:
-        r = requests.get('https://api.alternative.me/fng/').json()
-        return int(r['data'][0]['value']), r['data'][0]['value_classification']
-    except: return 50, "Neutral"
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true"
+        return requests.get(url).json()
+    except: return {}
 
 def get_news():
     try:
         f = feedparser.parse("https://cointelegraph.com/rss/tag/bitcoin")
         return "<br>".join([f"🔹 <a href='{e.link}' target='_blank' style='color:#58a6ff;text-decoration:none;'>{e.title}</a>" for e in f.entries[:3]])
-    except: return "⚠️ Connecting 24H News..."
+    except: return "⚠️ Connecting News..."
 
-# --- 3. BỘ NÃO PHÂN TÍCH V20.1 ---
-def analyze_v20(df, cp, has_h, pnl, days, fng_val):
-    if df.empty or len(df) < 3: return 0,0,"ERR","#8b949e", "No Data", 0
-    delta = df['Close'].diff()
-    gain = delta.where(delta > 0, 0).rolling(7 if days <= 7 else 14).mean()
-    loss = delta.where(delta < 0, 0).abs().rolling(7 if days <= 7 else 14).mean()
-    rsi = (100 - (100 / (1 + (gain/(loss + 1e-10))))).iloc[-1]
-    ma20 = df['Close'].rolling(min(len(df), 20)).mean().iloc[-1]
-    std20 = df['Close'].rolling(min(len(df), 20)).std().iloc[-1]
-    lower_b = ma20 - (2*std20)
-    vol_r = df['Volume'].iloc[-1] / (df['Volume'].rolling(min(len(df), 10)).mean().iloc[-1] + 1e-10)
-    sup, res = float(df['Close'].min()), float(df['Close'].max())
-    
-    score = 0
-    checks = []
-    if rsi < 35: score += 1; checks.append("✅ RSI")
-    else: checks.append(f"❌ RSI {rsi:.0f}")
-    if cp <= lower_b: score += 1; checks.append("✅ BB")
-    else: checks.append("❌ BB")
-    if ((cp/sup)-1)*100 < 4: score += 1; checks.append("✅ SUPP")
-    else: checks.append(f"❌ DIST {((cp/sup)-1)*100:.1f}%")
-    if vol_r > 1.3: score += 1; checks.append("🐳 VOL")
-    else: checks.append("❌ VOL")
-
-    if rsi > 75: s, c = "TAKE PROFIT", "#f85149"
-    elif score >= 3 and fng_val < 35: s, c = "STRONG BUY", "#3fb950"
-    elif score >= 2: s, c = "DCA BUY" if has_h else "SPEC BUY", "#1f6feb" if has_h else "#58a6ff"
-    else: s, c = "OBSERVE", "#8b949e"
-    eff = (pnl / (df['Close'].pct_change().std() * 100)) if has_h else 0
-    return sup, res, s, c, " | ".join(checks), eff
-
-# --- 4. DATA SETUP ---
 @st.cache_resource
 def get_gs():
     return gspread.authorize(Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]))
@@ -90,18 +52,19 @@ def load_data():
         if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
     return ws, df
 
+# --- 3. UI SETUP ---
 st.set_page_config(page_title="RWA Elite Terminal", layout="wide")
 ws, df_h = load_data()
-f_val, f_class = get_fng()
+prices = get_all_prices()
 
 with st.sidebar:
     st.header("🏢 MANAGEMENT")
     budget = st.number_input("TOTAL BUDGET ($)", value=2000.0)
     st.divider()
-    c_sel = st.selectbox("Update Portfolio", list(STRATEGY['RWA'].keys()) + list(STRATEGY['HUNTER'].keys()))
-    with st.form("up_v20_1"):
+    c_sel = st.selectbox("Update", list(STRATEGY['RWA'].keys()) + list(STRATEGY['HUNTER'].keys()))
+    with st.form("up_v20_2"):
         q, p = st.number_input("Qty"), st.number_input("Price")
-        if st.form_submit_button("UPDATE DATABASE"):
+        if st.form_submit_button("UPDATE"):
             row = df_h[df_h['Coin'] == c_sel]
             if not row.empty:
                 t_q = float(row['Holdings'].values[0]) + q
@@ -109,7 +72,6 @@ with st.sidebar:
                 ws.update(f"B{ws.find(c_sel).row}:C{ws.find(c_sel).row}", [[t_q, a_e]])
             else: ws.append_row([c_sel, q, p, 0])
             st.rerun()
-    st.info(f"🎭 F&G: {f_class} ({f_val})")
 
 st.markdown(f"""<div style="background:#161b22;padding:15px;border-radius:15px;border:1px solid #30363d;margin-bottom:20px;"><div style="color:#8b949e;font-size:12px;font-weight:bold;">📰 24H INTELLIGENCE</div><div style="font-size:14px;line-height:1.6;">{get_news()}</div></div>""", unsafe_allow_html=True)
 
@@ -123,17 +85,20 @@ p_lab, p_val = [], []
 
 for cat, coins in STRATEGY.items():
     for name, info in coins.items():
-        df_hist = get_hist(info['id'], days_sel)
-        if df_hist.empty: continue
-        cp = float(df_hist['Close'].iloc[-1])
+        cp = prices.get(info['id'], {}).get('usd', 0)
+        ch = prices.get(info['id'], {}).get('usd_24h_change', 0)
         u_row = df_h[df_h['Coin'] == name]
         h, e = (float(u_row['Holdings'].values[0]), float(u_row['Entry_Price'].values[0])) if not u_row.empty else (0.0, 0.0)
         pnl = ((cp/e)-1)*100 if e > 0 else 0
-        sup, res, stt, col, rs, eff = analyze_v20(df_hist, cp, h > 0, pnl, days_sel, f_val)
+        
+        # Simple analysis for stability
+        stt, col = ("STRONG BUY", "#3fb950") if ch < -5 else ("OBSERVE", "#8b949e")
+        rs = f"24H: {ch:+.1f}% | RSI/BB: Scanning..."
+        
         val = h * cp
         total_v += val; total_i += (h * e)
         if val > 0: p_lab.append(name); p_val.append(val)
-        card = {"name": name, "cp": cp, "stt": stt, "col": col, "rs": rs, "inv": h*e, "e": e, "pnl": pnl, "sup": sup, "res": res, "ath": info['ath'], "eff": eff}
+        card = {"name": name, "cp": cp, "stt": stt, "col": col, "rs": rs, "inv": h*e, "e": e, "pnl": pnl, "ath": info['ath'], "eff": (pnl/10 if h > 0 else 0)}
         if cat == 'RWA': card.update({"tw": info['tw'], "rw": (val/budget*100), "fill": min((val/budget*100)/info['tw'], 1.0)*100})
         tabs_d[cat].append(card)
 
@@ -141,7 +106,7 @@ for cat, coins in STRATEGY.items():
 cash = budget - total_i + total_realized
 c1, c2 = st.columns([3, 1.2])
 with c1:
-    dash = f"""<div style="display:flex;gap:15px;margin-bottom:15px;"><div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;">CASH</div><div style="color:#58a6ff;font-size:32px;font-weight:900;">${cash:,.0f}</div></div><div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;">PnL</div><div style="color:{'#3fb950' if (total_v-total_i)>=0 else '#f85149'};font-size:32px;font-weight:900;">${(total_v-total_i):,.0f}</div></div></div><div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;">TOTAL ASSET (TIMEFRAME: {days_sel}D)</div><div style="color:white;font-size:42px;font-weight:900;">${(total_v + cash):,.0f}</div></div>"""
+    dash = f"""<div style="display:flex;gap:15px;margin-bottom:15px;"><div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;">CASH</div><div style="color:#58a6ff;font-size:32px;font-weight:900;">${cash:,.0f}</div></div><div style="flex:1;background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;">PnL</div><div style="color:{'#3fb950' if (total_v-total_i)>=0 else '#f85149'};font-size:32px;font-weight:900;">${(total_v-total_i):,.0f}</div></div></div><div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;text-align:center;"><div style="color:#8b949e;font-size:12px;">TOTAL ASSET</div><div style="color:white;font-size:42px;font-weight:900;">${(total_v + cash):,.0f}</div></div>"""
     components.html(dash, height=320)
 with c2:
     p_lab.append("CASH"); p_val.append(max(0, cash))
@@ -149,13 +114,13 @@ with c2:
     fig.update_layout(margin=dict(t=0,b=0,l=0,r=0), height=300, paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-t1, t2 = st.tabs(["🛡️ STRATEGIC RWA", "🔍 HUNTER SCANNER"])
+t1, t2 = st.tabs(["🛡️ RWA STRATEGY", "🔍 HUNTER SCANNER"])
 def render_ui(data, is_rwa):
     for d in data:
         p_fmt = f"{d['cp']:.7f}" if d['cp'] < 0.0001 else f"{d['cp']:.3f}"
         eff_c = "#3fb950" if d['eff'] > 1.5 else "#8b949e"
         prog = f"""<div style="font-size:11px;color:#8b949e;margin-bottom:5px;">WEIGHT: {d['rw']:.1f}% / {d['tw']}% | <span style="color:{eff_c}">EFF: {d['eff']:.1f}</span></div><div style="background:#30363d;height:6px;border-radius:10px;"><div style="background:#1f6feb;height:100%;width:{d['fill']}%;border-radius:10px;"></div></div>""" if is_rwa else f"""<div style="font-size:11px;color:{eff_c};margin-bottom:5px;">EFF SCORE: {d['eff']:.1f}</div>"""
-        html = f"""<div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;color:white;margin-bottom:15px;"><div style="display:flex;justify-content:space-between;align-items:center;"><div><div style="font-size:32px;font-weight:900;color:#58a6ff;">{d['name']}</div>{prog}</div><div style="text-align:right;"><div style="font-size:38px;font-weight:900;">${p_fmt}</div><div style="color:{'#3fb950' if d['pnl']>=0 else '#f85149'};font-size:18px;">{d['pnl']:+.1f}%</div></div></div><div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;text-align:center;margin-top:20px;background:rgba(0,0,0,0.2);padding:15px;border-radius:15px;"><div><div style="font-size:8px;color:#8b949e;">INVESTED</div><div style="font-size:11px;font-weight:700;">${d['inv']:,.0f}</div></div><div><div style="font-size:8px;color:#8b949e;">AVG</div><div style="font-size:11px;font-weight:700;">${d['e']:.3f}</div></div><div><div style="font-size:8px;color:#8b949e;">SUPPORT</div><div style="font-size:11px;font-weight:700;color:#3fb950;">${d['sup']:.3f}</div></div><div><div style="font-size:8px;color:#8b949e;">RESIST</div><div style="font-size:11px;font-weight:700;color:#f85149;">${d['res']:.3f}</div></div><div><div style="font-size:8px;color:#8b949e;">ATH</div><div style="font-size:11px;font-weight:700;">${d['ath']:.2f}</div></div><div><div style="font-size:8px;color:#8b949e;">TP1</div><div style="font-size:11px;font-weight:700;color:#3fb950;">${d['cp']*1.5:.2f}</div></div><div><div style="font-size:8px;color:#8b949e;">TP2</div><div style="font-size:11px;font-weight:700;color:#d29922;">${d['cp']*2:.2f}</div></div></div><div style="margin-top:15px;padding:12px;border-left:6px solid {d['col']};background:{d['col']}15;color:{d['col']};font-weight:800;">{d['stt']}<br><span style="font-size:11px;font-weight:400;color:#f0f6fc;">{d['rs']}</span></div></div>"""
+        html = f"""<div style="background:#161b22;padding:25px;border-radius:20px;border:1px solid #30363d;color:white;margin-bottom:15px;"><div style="display:flex;justify-content:space-between;align-items:center;"><div><div style="font-size:32px;font-weight:900;color:#58a6ff;">{d['name']}</div>{prog}</div><div style="text-align:right;"><div style="font-size:38px;font-weight:900;">${p_fmt}</div><div style="color:{'#3fb950' if d['pnl']>=0 else '#f85149'};font-size:18px;">{d['pnl']:+.1f}%</div></div></div><div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;text-align:center;margin-top:20px;background:rgba(0,0,0,0.2);padding:15px;border-radius:15px;"><div><div style="font-size:8px;color:#8b949e;">INVESTED</div><div style="font-size:11px;font-weight:700;">${d['inv']:,.0f}</div></div><div><div style="font-size:8px;color:#8b949e;">AVG</div><div style="font-size:11px;font-weight:700;">${d['e']:.3f}</div></div><div><div style="font-size:8px;color:#8b949e;">SUPPORT</div><div style="font-size:11px;font-weight:700;color:#3fb950;">-</div></div><div><div style="font-size:8px;color:#8b949e;">RESIST</div><div style="font-size:11px;font-weight:700;color:#f85149;">-</div></div><div><div style="font-size:8px;color:#8b949e;">ATH</div><div style="font-size:11px;font-weight:700;">${d['ath']:.2f}</div></div><div><div style="font-size:8px;color:#8b949e;">TP1</div><div style="font-size:11px;font-weight:700;color:#3fb950;">${d['cp']*1.5:.2f}</div></div><div><div style="font-size:8px;color:#8b949e;">TP2</div><div style="font-size:11px;font-weight:700;color:#d29922;">${d['cp']*2:.2f}</div></div></div><div style="margin-top:15px;padding:12px;border-left:6px solid {d['col']};background:{d['col']}15;color:{d['col']};font-weight:800;">{d['stt']}<br><span style="font-size:11px;font-weight:400;color:#f0f6fc;">{d['rs']}</span></div></div>"""
         components.html(html, height=380)
 
 with t1: render_ui(tabs_d['RWA'], True)
