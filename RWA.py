@@ -7,7 +7,7 @@ from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
 import plotly.graph_objects as go
 
-# --- 1. BASELINE: 13 CHIẾN MÃ ---
+# --- 1. BASELINE CONFIG ---
 STRATEGY = {
     'RWA': {
         'LINK': {'id': 'chainlink', 'tw': 35, 'ath': 52.8},
@@ -48,17 +48,17 @@ def get_hist(cg_id, days):
 def get_fng():
     try:
         r = requests.get('https://api.alternative.me/fng/').json()
-        return int(r['data'][0]['value']), r['data'][0]['value_classification']
+        return int(r['data'][0]['value']), r['data'][0]['classification']
     except: return 50, "Neutral"
 
 # --- 3. BỘ NÃO PHÂN TÍCH ---
 def analyze_v22(df, cp, has_h, pnl, fng_val):
-    if df.empty or len(df) < 5: return 0,0,"WAITING","#8b949e", "Scan now", 0
+    if df.empty or len(df) < 5: return 0,0,"READY","#8b949e", "Select period", 0
     delta = df['Close'].diff()
     gain = delta.where(delta > 0, 0).rolling(14).mean()
     loss = delta.where(delta < 0, 0).abs().rolling(14).mean()
     rsi = (100 - (100 / (1 + (gain/(loss + 1e-10))))).iloc[-1]
-    vol_r = df['Volume'].iloc[-1] / (df['Volume'].rolling(10).mean().iloc[-1] + 1e-10)
+    vol_r = df['Volume'].iloc[-1] / (df['Volume'].rolling(min(len(df), 10)).mean().iloc[-1] + 1e-10)
     sup, res = float(df['Close'].min()), float(df['Close'].max())
     
     score = 0
@@ -75,7 +75,7 @@ def analyze_v22(df, cp, has_h, pnl, fng_val):
     eff = (pnl / (df['Close'].pct_change().std() * 100)) if has_h else 0
     return sup, res, s, c, " • ".join(checks), eff
 
-# --- 4. DATA SETUP (FIXED VALUEERROR) ---
+# --- 4. DATA SETUP ---
 @st.cache_resource
 def get_gs():
     return gspread.authorize(Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]))
@@ -92,10 +92,10 @@ def load_data():
 
 st.set_page_config(page_title="Sovereign Terminal", layout="wide")
 
-# CSS: ÉP NÚT NẰM NGANG & BO GÓC SANG TRỌNG
+# CSS: ÉP NÚT NẰM NGANG & GLASSMORPHISM
 st.markdown("""
 <style>
-    .stButton > button { border-radius: 8px; height: 32px; font-size: 10px; font-weight: 700; background-color: #161b22; border: 1px solid #30363d; margin-bottom: 0px; }
+    .stButton > button { width: 100%; border-radius: 8px; height: 32px; font-size: 11px; font-weight: 700; background-color: #161b22; border: 1px solid #30363d; color: white; }
     .stExpander { border-radius: 12px !important; border: 1px solid #30363d !important; background-color: #0d1117 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -104,7 +104,7 @@ ws, df_h = load_data()
 prices = get_current_prices()
 f_val, f_class = get_fng()
 
-# DASHBOARD HEADER (FIXED FORMATTING ERROR)
+# DASHBOARD HEADER (FIXED định dạng tiền tệ)
 total_v, total_i = 0.0, 0.0
 total_realized = float(df_h['Profit_Realized'].sum()) if not df_h.empty else 0.0
 for cat, coins in STRATEGY.items():
@@ -116,11 +116,14 @@ for cat, coins in STRATEGY.items():
         total_v += (h * cp); total_i += (h * e)
 
 cash = 2000.0 - total_i + total_realized
+pnl_val = total_v - total_i
+
+# UI DASHBOARD (SỬ DỤNG HTML TRỰC TIẾP ĐỂ TRÁNH LỖI VALUEERROR)
 st.markdown(f"""
 <div style="background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; margin-bottom: 20px;">
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <div><div style="color: #8b949e; font-size: 10px; font-weight: 600;">TOTAL ASSET</div><div style="color: white; font-size: 28px; font-weight: 900;">${(total_v + cash):,.0f}</div></div>
-        <div style="text-align: right;"><div style="color: #8b949e; font-size: 10px; font-weight: 600;">PNL</div><div style="color: {'#3fb950' if (total_v-total_i)>=0 else '#f85149'}; font-size: 22px; font-weight: 900;">${(total_v-total_i):,+.0f}</div></div>
+        <div style="text-align: right;"><div style="color: #8b949e; font-size: 10px; font-weight: 600;">PNL</div><div style="color: {'#3fb950' if pnl_val>=0 else '#f85149'}; font-size: 22px; font-weight: 900;">${pnl_val:,.0f}</div></div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -136,7 +139,7 @@ def render_luxury_card(name, info, is_rwa):
     p_fmt = f"{cp:.7f}" if cp < 0.0001 else f"{cp:.4f}"
     
     with st.expander(f"**{name}** | **${p_fmt}** | {pnl:+.1f}%"):
-        # NÚT BẤM NẰM NGANG
+        # ÉP 4 NÚT NẰM NGANG
         m_col = st.columns(4)
         d_sel = 0
         if m_col[0].button("7D", key=f"7_{name}"): d_sel = 7
@@ -149,15 +152,16 @@ def render_luxury_card(name, info, is_rwa):
                 df_hist = get_hist(info['id'], d_sel)
                 sup, res, stt, col, rs, eff = analyze_v22(df_hist, cp, h>0, pnl, f_val)
         else:
-            sup, res, stt, col, rs, eff = "-", "-", "READY", "#161b22", "Select timeframe", 0.0
+            sup, res, stt, col, rs, eff = 0.0, 0.0, "READY", "#161b22", "Select timeframe", 0.0
 
+        # CARD CONTENT (DỊNH DẠNG SỐ AN TOÀN)
         card_html = f"""
         <div style="background: #0d1117; padding: 15px; border-radius: 12px; border: 1px solid #30363d; margin-top: 10px;">
             <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center;">
-                <div><div style="font-size: 8px; color: #8b949e;">INV</div><div style="font-size: 11px; font-weight: 700;">${h*e:,.0f}</div></div>
+                <div><div style="font-size: 8px; color: #8b949e;">INV</div><div style="font-size: 11px; font-weight: 700;">${(h*e):,.0f}</div></div>
                 <div><div style="font-size: 8px; color: #8b949e;">AVG</div><div style="font-size: 11px; font-weight: 700;">${e:.3f}</div></div>
-                <div><div style="font-size: 8px; color: #8b949e;">SUP</div><div style="font-size: 11px; font-weight: 700; color: #3fb950;">{f'{sup:.3f}' if d_sel>0 else '-'}</div></div>
-                <div><div style="font-size: 8px; color: #8b949e;">RES</div><div style="font-size: 11px; font-weight: 700; color: #f85149;">{f'{res:.3f}' if d_sel>0 else '-'}</div></div>
+                <div><div style="font-size: 8px; color: #8b949e;">SUP</div><div style="font-size: 11px; font-weight: 700; color: #3fb950;">{f"{sup:.3f}" if d_sel>0 else "-"}</div></div>
+                <div><div style="font-size: 8px; color: #8b949e;">RES</div><div style="font-size: 11px; font-weight: 700; color: #f85149;">{f"{res:.3f}" if d_sel>0 else "-"}</div></div>
             </div>
             <div style="margin-top: 15px; padding: 10px; border-radius: 8px; background: {col}; color: white; text-align: center;">
                 <div style="font-size: 13px; font-weight: 900;">{stt}</div>
