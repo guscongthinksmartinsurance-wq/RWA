@@ -28,7 +28,7 @@ STRATEGY = {
     }
 }
 
-# --- 2. HÀM TRỢ NĂNG (GỌI RIÊNG LẺ) ---
+# --- 2. HÀM TRỢ NĂNG ---
 @st.cache_data(ttl=300)
 def get_current_prices():
     ids = ",".join([v['id'] for cat in STRATEGY.values() for v in cat.values()])
@@ -51,9 +51,9 @@ def get_fng():
         return int(r['data'][0]['value']), r['data'][0]['value_classification']
     except: return 50, "Neutral"
 
-# --- 3. BỘ NÃO PHÂN TÍCH V22.0 ---
+# --- 3. BỘ NÃO PHÂN TÍCH ---
 def analyze_v22(df, cp, has_h, pnl, fng_val):
-    if df.empty or len(df) < 5: return 0,0,"WAITING DATA","#8b949e", "Select timeframe", 0
+    if df.empty or len(df) < 5: return 0,0,"WAITING","#8b949e", "Scan now", 0
     delta = df['Close'].diff()
     gain = delta.where(delta > 0, 0).rolling(14).mean()
     loss = delta.where(delta < 0, 0).abs().rolling(14).mean()
@@ -64,7 +64,7 @@ def analyze_v22(df, cp, has_h, pnl, fng_val):
     score = 0
     checks = []
     if rsi < 35: score += 1; checks.append("RSI")
-    if cp <= df['Close'].rolling(20).mean().iloc[-1]: score += 1; checks.append("BB")
+    if cp <= df['Close'].rolling(min(len(df), 20)).mean().iloc[-1]: score += 1; checks.append("BB")
     if ((cp/sup)-1)*100 < 5: score += 1; checks.append("SUPP")
     if vol_r > 1.3: score += 1; checks.append("WHALE")
 
@@ -73,9 +73,9 @@ def analyze_v22(df, cp, has_h, pnl, fng_val):
     elif score >= 2: s, c = "ACCUMULATE", "linear-gradient(90deg, #1f6feb, #58a6ff)"
     else: s, c = "OBSERVE", "linear-gradient(90deg, #30363d, #484f58)"
     eff = (pnl / (df['Close'].pct_change().std() * 100)) if has_h else 0
-    return sup, res, s, c, " • ".join(checks) if checks else "STABLE", eff
+    return sup, res, s, c, " • ".join(checks), eff
 
-# --- 4. DATA SETUP ---
+# --- 4. DATA SETUP (FIXED ERRORS) ---
 @st.cache_resource
 def get_gs():
     return gspread.authorize(Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]))
@@ -84,19 +84,17 @@ def load_data():
     ws = get_gs().open("TMC-Sales-Assistant").worksheet("Holdings")
     df = pd.DataFrame(ws.get_all_records())
     for c in ['Holdings', 'Entry_Price', 'Profit_Realized']:
-        if col in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+        if c in df.columns: 
+            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
     return ws, df
 
 st.set_page_config(page_title="Sovereign Terminal", layout="wide")
 
-# CSS CUSTOM CHO GIAO DIỆN SANG TRỌNG
+# CSS FIX: Bo góc và khoảng cách
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;900&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #0d1117; }
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: transparent; }
-    .stTabs [data-baseweb="tab"] { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 20px; color: #8b949e; }
-    .stTabs [aria-selected="true"] { background-color: #1f6feb !important; color: white !important; border: 1px solid #58a6ff; }
+    .stButton > button { width: 100%; border-radius: 8px; height: 35px; font-size: 11px; font-weight: 700; background-color: #161b22; border: 1px solid #30363d; }
+    .stExpander { border-radius: 15px !important; border: 1px solid #30363d !important; background-color: #0d1117 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,15 +114,17 @@ for cat, coins in STRATEGY.items():
         total_v += (h * cp); total_i += (h * e)
         if (h*cp) > 0: p_lab.append(name); p_val.append(h*cp)
 
-cash = 2000.0 - total_i + total_realized # Baseline budget
+cash = 2000.0 - total_i + total_realized
 st.markdown(f"""
-<div style="display: flex; justify-content: space-between; align-items: center; background: #161b22; padding: 25px; border-radius: 20px; border: 1px solid #30363d; margin-bottom: 25px;">
-    <div><div style="color: #8b949e; font-size: 12px; font-weight: 600;">TOTAL ASSET</div><div style="color: white; font-size: 36px; font-weight: 900;">${(total_v + cash):,.0f}</div></div>
-    <div style="text-align: right;"><div style="color: #8b949e; font-size: 12px; font-weight: 600;">PORTFOLIO PNL</div><div style="color: {'#3fb950' if (total_v-total_i)>=0 else '#f85149'}; font-size: 28px; font-weight: 900;">${(total_v-total_i):,+.0f}</div></div>
+<div style="background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; margin-bottom: 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div><div style="color: #8b949e; font-size: 10px;">TOTAL ASSET</div><div style="color: white; font-size: 28px; font-weight: 900;">${(total_v + cash):,.0f}</div></div>
+        <div style="text-align: right;"><div style="color: #8b949e; font-size: 10px;">PNL</div><div style="color: {'#3fb950' if (total_v-total_i)>=0 else '#f85149'}; font-size: 22px; font-weight: 900;">${(total_v-total_i):,+.0f}</div></div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
-t1, t2 = st.tabs(["🛡️ STRATEGIC RWA", "🔍 HUNTER SCANNER"])
+t1, t2 = st.tabs(["🛡️ RWA", "🔍 HUNTER"])
 
 def render_luxury_card(name, info, is_rwa):
     cp = prices.get(info['id'], {}).get('usd', 0)
@@ -133,11 +133,10 @@ def render_luxury_card(name, info, is_rwa):
     pnl = ((cp/e)-1)*100 if e > 0 else 0
     p_fmt = f"{cp:.7f}" if cp < 0.0001 else f"{cp:.4f}"
     
-    with st.container():
-        st.markdown(f"""<div style="margin-top:20px; margin-bottom:10px;"><span style="font-size:20px; font-weight:900; color:#58a6ff;">{name}</span> <span style="color:#8b949e; font-size:14px;">| {pnl:+.1f}%</span></div>""", unsafe_allow_html=True)
-        
-        # Nút bấm được làm đẹp lại thành cụm điều hướng
-        m_col = st.columns([1,1,1,1,4])
+    # Giao diện Expander gọn gàng
+    with st.expander(f"**{name}** | **${p_fmt}** | {pnl:+.1f}%"):
+        # ÉP NÚT BẤM VÀO MỘT HÀNG NGANG
+        m_col = st.columns([1,1,1,1])
         d_sel = 0
         if m_col[0].button("7D", key=f"7_{name}"): d_sel = 7
         if m_col[1].button("30D", key=f"30_{name}"): d_sel = 30
@@ -145,30 +144,24 @@ def render_luxury_card(name, info, is_rwa):
         if m_col[3].button("1Y", key=f"365_{name}"): d_sel = 365
         
         if d_sel > 0:
-            df_hist = get_hist(info['id'], d_sel)
-            sup, res, stt, col, rs, eff = analyze_v22(df_hist, cp, h>0, pnl, f_val)
+            with st.spinner('Scanning...'):
+                df_hist = get_hist(info['id'], d_sel)
+                sup, res, stt, col, rs, eff = analyze_v22(df_hist, cp, h>0, pnl, f_val)
         else:
-            sup, res, stt, col, rs, eff = "-", "-", "READY TO SCAN", "linear-gradient(90deg, #161b22, #161b22)", "Select period", 0
+            sup, res, stt, col, rs, eff = "-", "-", "READY", "#161b22", "Select timeframe", 0
 
-        # UI LUXURY CARD CONTENT
-        weight_html = f"""<div style="font-size:11px; color:#8b949e; margin-bottom:8px;">WEIGHT: {(h*cp/2000*100):.1f}% / {info.get('tw',0)}%</div>""" if is_rwa else ""
-        
+        # CARD CONTENT
         card_html = f"""
-        <div style="background: #161b22; padding: 25px; border-radius: 20px; border: 1px solid #30363d; color: white;">
-            <div style="display: flex; justify-content: space-between; align-items: baseline;">
-                <div style="font-size: 38px; font-weight: 900; letter-spacing: -1px;">${p_fmt}</div>
-                <div style="font-size: 14px; color: #8b949e; font-weight: 600;">ATH: ${info['ath']}</div>
+        <div style="background: #0d1117; padding: 15px; border-radius: 12px; border: 1px solid #30363d; margin-top: 10px;">
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center;">
+                <div><div style="font-size: 8px; color: #8b949e;">INV</div><div style="font-size: 11px; font-weight: 700;">${h*e:,.0f}</div></div>
+                <div><div style="font-size: 8px; color: #8b949e;">AVG</div><div style="font-size: 11px; font-weight: 700;">${e:.3f}</div></div>
+                <div><div style="font-size: 8px; color: #8b949e;">SUP</div><div style="font-size: 11px; font-weight: 700; color: #3fb950;">{sup if d_sel>0 else '-'}</div></div>
+                <div><div style="font-size: 8px; color: #8b949e;">RES</div><div style="font-size: 11px; font-weight: 700; color: #f85149;">{res if d_sel>0 else '-'}</div></div>
             </div>
-            {weight_html}
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 20px; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 12px;">
-                <div style="text-align: center;"><div style="font-size: 10px; color: #8b949e;">INVESTED</div><div style="font-size: 14px; font-weight: 600;">${h*e:,.0f}</div></div>
-                <div style="text-align: center;"><div style="font-size: 10px; color: #8b949e;">AVG</div><div style="font-size: 14px; font-weight: 600;">${e:.4f}</div></div>
-                <div style="text-align: center;"><div style="font-size: 10px; color: #8b949e;">SUPPORT</div><div style="font-size: 14px; font-weight: 600; color: #3fb950;">{sup if d_sel>0 else '-'}</div></div>
-                <div style="text-align: center;"><div style="font-size: 10px; color: #8b949e;">RESIST</div><div style="font-size: 14px; font-weight: 600; color: #f85149;">{res if d_sel>0 else '-'}</div></div>
-            </div>
-            <div style="margin-top: 20px; padding: 15px; border-radius: 12px; background: {col}; color: white; text-align: center;">
-                <div style="font-size: 16px; font-weight: 900; text-transform: uppercase;">{stt}</div>
-                <div style="font-size: 11px; font-weight: 400; opacity: 0.9; margin-top: 4px;">{rs}</div>
+            <div style="margin-top: 15px; padding: 10px; border-radius: 8px; background: {col}; color: white; text-align: center;">
+                <div style="font-size: 13px; font-weight: 900;">{stt}</div>
+                <div style="font-size: 9px; opacity: 0.8;">{rs}</div>
             </div>
         </div>
         """
