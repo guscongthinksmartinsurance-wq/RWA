@@ -26,14 +26,12 @@ STRATEGY = {
     }
 }
 
-# --- 2. HÀM TRỢ NĂNG (DỮ LIỆU THỰC) ---
+# --- 2. HÀM TRỢ NĂNG ---
 def get_hist(cg_id, days):
     try:
         url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart?vs_currency=usd&days={days}&interval=daily"
         r = requests.get(url).json()
-        p = [x[1] for x in r['prices']]
-        v = [x[1] for x in r['total_volumes']]
-        return pd.DataFrame({'Close': p, 'Volume': v})
+        return pd.DataFrame({'Close': [x[1] for x in r['prices']], 'Volume': [x[1] for x in r['total_volumes']]})
     except: return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
@@ -43,52 +41,47 @@ def get_fng():
         return int(r['data'][0]['value']), r['data'][0]['value_classification']
     except: return 50, "Neutral"
 
-# --- 3. MA TRẬN QUYẾT ĐỊNH V20.0 ---
+def get_news():
+    try:
+        f = feedparser.parse("https://cointelegraph.com/rss/tag/bitcoin")
+        return "<br>".join([f"🔹 <a href='{e.link}' target='_blank' style='color:#58a6ff;text-decoration:none;'>{e.title}</a>" for e in f.entries[:3]])
+    except: return "⚠️ Connecting 24H News..."
+
+# --- 3. BỘ NÃO PHÂN TÍCH V20.1 ---
 def analyze_v20(df, cp, has_h, pnl, days, fng_val):
-    if df.empty or len(df) < 3: return 0,0,"ERR","#8b", "No Data", 0
-    
-    # Kỹ thuật
+    if df.empty or len(df) < 3: return 0,0,"ERR","#8b949e", "No Data", 0
     delta = df['Close'].diff()
-    rsi_p = 7 if days <= 7 else 14
-    gain = delta.where(delta > 0, 0).rolling(rsi_p).mean()
-    loss = delta.where(delta < 0, 0).abs().rolling(rsi_p).mean()
+    gain = delta.where(delta > 0, 0).rolling(7 if days <= 7 else 14).mean()
+    loss = delta.where(delta < 0, 0).abs().rolling(7 if days <= 7 else 14).mean()
     rsi = (100 - (100 / (1 + (gain/(loss + 1e-10))))).iloc[-1]
-    
     ma20 = df['Close'].rolling(min(len(df), 20)).mean().iloc[-1]
     std20 = df['Close'].rolling(min(len(df), 20)).std().iloc[-1]
-    upper_b, lower_b = ma20 + (2*std20), ma20 - (2*std20)
-    
+    lower_b = ma20 - (2*std20)
     vol_r = df['Volume'].iloc[-1] / (df['Volume'].rolling(min(len(df), 10)).mean().iloc[-1] + 1e-10)
     sup, res = float(df['Close'].min()), float(df['Close'].max())
-    dist_s = ((cp/sup)-1)*100
     
-    # Xếp chồng chỉ số (Confluence)
     score = 0
     checks = []
     if rsi < 35: score += 1; checks.append("✅ RSI")
     else: checks.append(f"❌ RSI {rsi:.0f}")
     if cp <= lower_b: score += 1; checks.append("✅ BB")
     else: checks.append("❌ BB")
-    if dist_s < 4: score += 1; checks.append("✅ SUPP")
-    else: checks.append(f"❌ DIST {dist_s:.1f}%")
+    if ((cp/sup)-1)*100 < 4: score += 1; checks.append("✅ SUPP")
+    else: checks.append(f"❌ DIST {((cp/sup)-1)*100:.1f}%")
     if vol_r > 1.3: score += 1; checks.append("🐳 VOL")
     else: checks.append("❌ VOL")
 
-    # LOGIC TRẠNG THÁI CHI TIẾT
-    if rsi > 75 or cp >= upper_b: s, c = "EXIT / TAKE PROFIT", "#f85149"
-    elif score >= 3 and fng_val < 30: s, c = "STRONG BUY", "#3fb950"
+    if rsi > 75: s, c = "TAKE PROFIT", "#f85149"
+    elif score >= 3 and fng_val < 35: s, c = "STRONG BUY", "#3fb950"
     elif score >= 2: s, c = "DCA BUY" if has_h else "SPEC BUY", "#1f6feb" if has_h else "#58a6ff"
-    elif rsi < 30: s, c = "OVERSOLD / BUY LIGHT", "#58a6ff"
     else: s, c = "OBSERVE", "#8b949e"
-    
     eff = (pnl / (df['Close'].pct_change().std() * 100)) if has_h else 0
     return sup, res, s, c, " | ".join(checks), eff
 
-# --- 4. DATA LOADING ---
+# --- 4. DATA SETUP ---
 @st.cache_resource
 def get_gs():
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
-    return gspread.authorize(creds)
+    return gspread.authorize(Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]))
 
 def load_data():
     ws = get_gs().open("TMC-Sales-Assistant").worksheet("Holdings")
@@ -97,8 +90,7 @@ def load_data():
         if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
     return ws, df
 
-# --- 5. INTERFACE ---
-st.set_page_config(page_title="RWA Elite V20", layout="wide")
+st.set_page_config(page_title="RWA Elite Terminal", layout="wide")
 ws, df_h = load_data()
 f_val, f_class = get_fng()
 
@@ -107,7 +99,7 @@ with st.sidebar:
     budget = st.number_input("TOTAL BUDGET ($)", value=2000.0)
     st.divider()
     c_sel = st.selectbox("Update Portfolio", list(STRATEGY['RWA'].keys()) + list(STRATEGY['HUNTER'].keys()))
-    with st.form("up_v20"):
+    with st.form("up_v20_1"):
         q, p = st.number_input("Qty"), st.number_input("Price")
         if st.form_submit_button("UPDATE DATABASE"):
             row = df_h[df_h['Coin'] == c_sel]
@@ -117,12 +109,12 @@ with st.sidebar:
                 ws.update(f"B{ws.find(c_sel).row}:C{ws.find(c_sel).row}", [[t_q, a_e]])
             else: ws.append_row([c_sel, q, p, 0])
             st.rerun()
-    st.info(f"🎭 F&G Index: {f_class} ({f_val}/100)")
+    st.info(f"🎭 F&G: {f_class} ({f_val})")
 
-# MẶT TIỀN: THANH KÉO CHIẾN THUẬT (MOBILE OPTIMIZED)
+st.markdown(f"""<div style="background:#161b22;padding:15px;border-radius:15px;border:1px solid #30363d;margin-bottom:20px;"><div style="color:#8b949e;font-size:12px;font-weight:bold;">📰 24H INTELLIGENCE</div><div style="font-size:14px;line-height:1.6;">{get_news()}</div></div>""", unsafe_allow_html=True)
+
 st.markdown("### 🎯 STRATEGY PERIOD")
-days_sel = st.select_slider("Select timeframe for Decision Matrix", options=[7, 30, 90, 365], value=30)
-st.divider()
+days_sel = st.select_slider("Select Timeframe", options=[7, 30, 90, 365], value=30)
 
 # PROCESS
 total_v, total_i, total_realized = 0, 0, float(df_h['Profit_Realized'].sum())
@@ -138,7 +130,6 @@ for cat, coins in STRATEGY.items():
         h, e = (float(u_row['Holdings'].values[0]), float(u_row['Entry_Price'].values[0])) if not u_row.empty else (0.0, 0.0)
         pnl = ((cp/e)-1)*100 if e > 0 else 0
         sup, res, stt, col, rs, eff = analyze_v20(df_hist, cp, h > 0, pnl, days_sel, f_val)
-        
         val = h * cp
         total_v += val; total_i += (h * e)
         if val > 0: p_lab.append(name); p_val.append(val)
@@ -146,7 +137,7 @@ for cat, coins in STRATEGY.items():
         if cat == 'RWA': card.update({"tw": info['tw'], "rw": (val/budget*100), "fill": min((val/budget*100)/info['tw'], 1.0)*100})
         tabs_d[cat].append(card)
 
-# DASHBOARD RENDER
+# DASHBOARD
 cash = budget - total_i + total_realized
 c1, c2 = st.columns([3, 1.2])
 with c1:
@@ -158,8 +149,7 @@ with c2:
     fig.update_layout(margin=dict(t=0,b=0,l=0,r=0), height=300, paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-# TABS RENDER
-t1, t2 = st.tabs(["🛡️ RWA STRATEGY", "🔍 HUNTER SCANNER"])
+t1, t2 = st.tabs(["🛡️ STRATEGIC RWA", "🔍 HUNTER SCANNER"])
 def render_ui(data, is_rwa):
     for d in data:
         p_fmt = f"{d['cp']:.7f}" if d['cp'] < 0.0001 else f"{d['cp']:.3f}"
