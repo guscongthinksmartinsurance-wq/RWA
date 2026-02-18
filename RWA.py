@@ -28,7 +28,7 @@ STRATEGY = {
     }
 }
 
-# --- 2. HÀM TRỢ NĂNG ---
+# --- 2. HÀM TRỢ NĂNG (BỌC LỖI TRIỆT ĐỂ) ---
 @st.cache_data(ttl=300)
 def get_current_prices():
     ids = ",".join([v['id'] for cat in STRATEGY.values() for v in cat.values()])
@@ -75,26 +75,28 @@ def analyze_v22(df, cp, has_h, pnl, fng_val):
     eff = (pnl / (df['Close'].pct_change().std() * 100)) if has_h else 0
     return sup, res, s, c, " • ".join(checks), eff
 
-# --- 4. DATA SETUP (FIXED ERRORS) ---
+# --- 4. DATA SETUP (FIXED VALUEERROR) ---
 @st.cache_resource
 def get_gs():
     return gspread.authorize(Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]))
 
 def load_data():
-    ws = get_gs().open("TMC-Sales-Assistant").worksheet("Holdings")
-    df = pd.DataFrame(ws.get_all_records())
-    for c in ['Holdings', 'Entry_Price', 'Profit_Realized']:
-        if c in df.columns: 
-            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
-    return ws, df
+    try:
+        ws = get_gs().open("TMC-Sales-Assistant").worksheet("Holdings")
+        df = pd.DataFrame(ws.get_all_records())
+        for c in ['Holdings', 'Entry_Price', 'Profit_Realized']:
+            if c in df.columns: 
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+        return ws, df
+    except: return None, pd.DataFrame(columns=['Coin', 'Holdings', 'Entry_Price', 'Profit_Realized'])
 
 st.set_page_config(page_title="Sovereign Terminal", layout="wide")
 
-# CSS FIX: Bo góc và khoảng cách
+# CSS: ÉP NÚT NẰM NGANG & BO GÓC SANG TRỌNG
 st.markdown("""
 <style>
-    .stButton > button { width: 100%; border-radius: 8px; height: 35px; font-size: 11px; font-weight: 700; background-color: #161b22; border: 1px solid #30363d; }
-    .stExpander { border-radius: 15px !important; border: 1px solid #30363d !important; background-color: #0d1117 !important; }
+    .stButton > button { border-radius: 8px; height: 32px; font-size: 10px; font-weight: 700; background-color: #161b22; border: 1px solid #30363d; margin-bottom: 0px; }
+    .stExpander { border-radius: 12px !important; border: 1px solid #30363d !important; background-color: #0d1117 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -102,24 +104,23 @@ ws, df_h = load_data()
 prices = get_current_prices()
 f_val, f_class = get_fng()
 
-# DASHBOARD HEADER
-total_v, total_i = 0, 0
-total_realized = float(df_h['Profit_Realized'].sum())
-p_lab, p_val = [], []
+# DASHBOARD HEADER (FIXED FORMATTING ERROR)
+total_v, total_i = 0.0, 0.0
+total_realized = float(df_h['Profit_Realized'].sum()) if not df_h.empty else 0.0
 for cat, coins in STRATEGY.items():
     for name, info in coins.items():
-        cp = prices.get(info['id'], {}).get('usd', 0)
-        u_row = df_h[df_h['Coin'] == name]
-        h, e = (float(u_row['Holdings'].values[0]), float(u_row['Entry_Price'].values[0])) if not u_row.empty else (0.0, 0.0)
+        cp = float(prices.get(info['id'], {}).get('usd', 0.0))
+        u_row = df_h[df_h['Coin'] == name] if not df_h.empty else pd.DataFrame()
+        h = float(u_row['Holdings'].values[0]) if not u_row.empty else 0.0
+        e = float(u_row['Entry_Price'].values[0]) if not u_row.empty else 0.0
         total_v += (h * cp); total_i += (h * e)
-        if (h*cp) > 0: p_lab.append(name); p_val.append(h*cp)
 
 cash = 2000.0 - total_i + total_realized
 st.markdown(f"""
 <div style="background: #161b22; padding: 20px; border-radius: 15px; border: 1px solid #30363d; margin-bottom: 20px;">
     <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div><div style="color: #8b949e; font-size: 10px;">TOTAL ASSET</div><div style="color: white; font-size: 28px; font-weight: 900;">${(total_v + cash):,.0f}</div></div>
-        <div style="text-align: right;"><div style="color: #8b949e; font-size: 10px;">PNL</div><div style="color: {'#3fb950' if (total_v-total_i)>=0 else '#f85149'}; font-size: 22px; font-weight: 900;">${(total_v-total_i):,+.0f}</div></div>
+        <div><div style="color: #8b949e; font-size: 10px; font-weight: 600;">TOTAL ASSET</div><div style="color: white; font-size: 28px; font-weight: 900;">${(total_v + cash):,.0f}</div></div>
+        <div style="text-align: right;"><div style="color: #8b949e; font-size: 10px; font-weight: 600;">PNL</div><div style="color: {'#3fb950' if (total_v-total_i)>=0 else '#f85149'}; font-size: 22px; font-weight: 900;">${(total_v-total_i):,+.0f}</div></div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -127,16 +128,16 @@ st.markdown(f"""
 t1, t2 = st.tabs(["🛡️ RWA", "🔍 HUNTER"])
 
 def render_luxury_card(name, info, is_rwa):
-    cp = prices.get(info['id'], {}).get('usd', 0)
-    u_row = df_h[df_h['Coin'] == name]
-    h, e = (float(u_row['Holdings'].values[0]), float(u_row['Entry_Price'].values[0])) if not u_row.empty else (0.0, 0.0)
-    pnl = ((cp/e)-1)*100 if e > 0 else 0
+    cp = float(prices.get(info['id'], {}).get('usd', 0.0))
+    u_row = df_h[df_h['Coin'] == name] if not df_h.empty else pd.DataFrame()
+    h = float(u_row['Holdings'].values[0]) if not u_row.empty else 0.0
+    e = float(u_row['Entry_Price'].values[0]) if not u_row.empty else 0.0
+    pnl = ((cp/e)-1)*100 if e > 0 else 0.0
     p_fmt = f"{cp:.7f}" if cp < 0.0001 else f"{cp:.4f}"
     
-    # Giao diện Expander gọn gàng
     with st.expander(f"**{name}** | **${p_fmt}** | {pnl:+.1f}%"):
-        # ÉP NÚT BẤM VÀO MỘT HÀNG NGANG
-        m_col = st.columns([1,1,1,1])
+        # NÚT BẤM NẰM NGANG
+        m_col = st.columns(4)
         d_sel = 0
         if m_col[0].button("7D", key=f"7_{name}"): d_sel = 7
         if m_col[1].button("30D", key=f"30_{name}"): d_sel = 30
@@ -148,16 +149,15 @@ def render_luxury_card(name, info, is_rwa):
                 df_hist = get_hist(info['id'], d_sel)
                 sup, res, stt, col, rs, eff = analyze_v22(df_hist, cp, h>0, pnl, f_val)
         else:
-            sup, res, stt, col, rs, eff = "-", "-", "READY", "#161b22", "Select timeframe", 0
+            sup, res, stt, col, rs, eff = "-", "-", "READY", "#161b22", "Select timeframe", 0.0
 
-        # CARD CONTENT
         card_html = f"""
         <div style="background: #0d1117; padding: 15px; border-radius: 12px; border: 1px solid #30363d; margin-top: 10px;">
             <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center;">
                 <div><div style="font-size: 8px; color: #8b949e;">INV</div><div style="font-size: 11px; font-weight: 700;">${h*e:,.0f}</div></div>
                 <div><div style="font-size: 8px; color: #8b949e;">AVG</div><div style="font-size: 11px; font-weight: 700;">${e:.3f}</div></div>
-                <div><div style="font-size: 8px; color: #8b949e;">SUP</div><div style="font-size: 11px; font-weight: 700; color: #3fb950;">{sup if d_sel>0 else '-'}</div></div>
-                <div><div style="font-size: 8px; color: #8b949e;">RES</div><div style="font-size: 11px; font-weight: 700; color: #f85149;">{res if d_sel>0 else '-'}</div></div>
+                <div><div style="font-size: 8px; color: #8b949e;">SUP</div><div style="font-size: 11px; font-weight: 700; color: #3fb950;">{f'{sup:.3f}' if d_sel>0 else '-'}</div></div>
+                <div><div style="font-size: 8px; color: #8b949e;">RES</div><div style="font-size: 11px; font-weight: 700; color: #f85149;">{f'{res:.3f}' if d_sel>0 else '-'}</div></div>
             </div>
             <div style="margin-top: 15px; padding: 10px; border-radius: 8px; background: {col}; color: white; text-align: center;">
                 <div style="font-size: 13px; font-weight: 900;">{stt}</div>
