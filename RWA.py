@@ -6,7 +6,7 @@ import feedparser
 from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
 
-# --- 1. DANH MỤC 13 CHIẾN MÃ ---
+# --- 1. CONFIG: 13 CHIẾN MÃ (OM FIXED IDS) ---
 STRATEGY = {
     'RWA': {
         'LINK': {'id': 'chainlink', 'tw': 35, 'ath': 52.8},
@@ -27,18 +27,20 @@ STRATEGY = {
     }
 }
 
-# --- 2. HÀM AN TOÀN & DỮ LIỆU ---
+# --- 2. HÀM AN TOÀN & DATA ENGINE ---
 def safe_f(val):
     try: return float(val) if val is not None else 0.0
     except: return 0.0
 
 @st.cache_data(ttl=120)
 def get_prices():
+    # Gọi cả 2 ID tiềm năng của Mantra để không bị hụt giá
     ids = "chainlink,ondo-finance,mantra-chain,mantra,quant-network,pendle,maple,centrifuge,solana,sui,sei-network,fetch-ai,arbitrum,pepe"
     try:
         r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd").json()
-        om_p = r.get('mantra-chain', {}).get('usd') or r.get('mantra', {}).get('usd') or 0.0
-        r['mantra-chain'] = {'usd': om_p}
+        # Logic "Vá lỗi" giá OM
+        om_price = r.get('mantra-chain', {}).get('usd') or r.get('mantra', {}).get('usd') or 0.0
+        r['mantra-chain'] = {'usd': om_price}
         return r
     except: return {}
 
@@ -73,7 +75,7 @@ def analyze_v24(df, cp, has_h, pnl, fng_val):
     eff = (pnl / (df['Close'].pct_change().std() * 100)) if has_h and not df.empty else 0.0
     return sup, res, s, c, m, eff
 
-# --- 4. CẤU HÌNH APP & DỮ LIỆU G-SHEET ---
+# --- 4. APP UI ---
 st.set_page_config(page_title="Sovereign Terminal", layout="wide")
 st.markdown("<style>iframe { pointer-events: auto !important; } .stSelectbox { margin-bottom: -15px; }</style>", unsafe_allow_html=True)
 
@@ -131,7 +133,8 @@ def render_coin(name, info):
     h = safe_f(u_row['Holdings'].iloc[0]) if not u_row.empty else 0.0
     e = safe_f(u_row['Entry_Price'].iloc[0]) if not u_row.empty else 0.0
     pnl = ((cp/e)-1)*100 if e > 0 else 0.0
-    p_fmt = f"{cp:.5f}" if cp < 1 else f"{cp:.3f}"
+    # Định dạng giá đặc biệt cho PEPE và các đồng giá thấp
+    p_fmt = f"{cp:.7f}" if cp < 0.0001 else (f"{cp:.4f}" if cp < 1 else f"{cp:.2f}")
     
     st.markdown(f"<div style='margin-top:15px; font-weight:900; color:#58a6ff;'>{name} <span style='color:#8b949e; font-size:11px;'>• ${p_fmt} • {pnl:+.1f}%</span></div>", unsafe_allow_html=True)
     
