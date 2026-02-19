@@ -6,7 +6,7 @@ import feedparser
 from google.oauth2.service_account import Credentials
 import plotly.graph_objects as go
 
-# --- 1. CONFIG: 13 CHIẾN MÃ (FIXED OM ID) ---
+# --- 1. CONFIG: 13 CHIẾN MÃ (OM FIXED) ---
 STRATEGY = {
     'RWA': {
         'LINK': {'id': 'chainlink', 'tw': 35, 'ath': 52.8},
@@ -27,12 +27,11 @@ STRATEGY = {
     }
 }
 
-# --- 2. DATA ENGINE (FIXED OM FETCH) ---
+# --- 2. DATA ENGINE ---
 @st.cache_data(ttl=120)
 def get_current_prices():
     ids = ",".join([v['id'] for cat in STRATEGY.values() for v in cat.values()])
     try:
-        # Thêm 'mantra' vào dự phòng nếu 'mantra-chain' lỗi
         r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={ids},mantra&vs_currencies=usd").json()
         if 'mantra' in r and 'mantra-chain' not in r: r['mantra-chain'] = r['mantra']
         return r
@@ -45,23 +44,23 @@ def get_hist_data(cg_id, days):
     except: return pd.DataFrame()
 
 @st.cache_data(ttl=600)
-def get_intel():
+def get_intel_v2():
     try:
         f = feedparser.parse("https://cointelegraph.com/rss/tag/bitcoin")
-        entry = f.entries[0]
-        news_link = f"<a href='{entry.link}' target='_blank' style='color:#58a6ff;text-decoration:none;font-weight:bold;'>{entry.title[:45]}...</a>"
+        top_3 = []
+        for entry in f.entries[:3]:
+            top_3.append(f"🔹 <a href='{entry.link}' target='_blank' style='color:#58a6ff;text-decoration:none;'>{entry.title[:55]}...</a>")
         fng = requests.get('https://api.alternative.me/fng/').json()['data'][0]['value']
-        return fng, news_link
-    except: return "50", "Market updating..."
+        return fng, top_3
+    except: return "50", ["⚠️ Market news updating..."]
 
-# --- 3. DECISION ENGINE ---
+# --- 3. ANALYZE ENGINE (V24.1) ---
 def analyze_v24(df, cp, has_h, pnl, fng_val):
     if df.empty or len(df) < 5: return 0.0, 0.0, "SCANNING", "#30363d", "Waiting...", 0.0
     sup, res = float(df['Close'].min()), float(df['Close'].max())
     delta = df['Close'].diff(); gain = delta.where(delta > 0, 0).rolling(14).mean()
     loss = delta.where(delta < 0, 0).abs().rolling(14).mean()
     rsi = (100 - (100 / (1 + (gain/(loss + 1e-10))))).iloc[-1]
-    vol_r = df['Volume'].iloc[-1] / (df['Volume'].rolling(10).mean().iloc[-1] + 1e-10)
     
     if rsi < 35: s, c, m = "STRONG BUY", "#3fb950", "RSI LOW • SUPPORT"
     elif rsi > 75: s, c, m = "TAKE PROFIT", "#f85149", "OVERBOUGHT"
@@ -71,8 +70,8 @@ def analyze_v24(df, cp, has_h, pnl, fng_val):
     eff = (pnl / (df['Close'].pct_change().std() * 100)) if has_h and not df.empty else 0.0
     return sup, res, s, c, m, eff
 
-# --- 4. APP UI ---
-st.set_page_config(page_title="Sovereign", layout="wide")
+# --- 4. INTERFACE ---
+st.set_page_config(page_title="Sovereign Hub", layout="wide")
 st.markdown("<style>iframe { pointer-events: auto !important; } .stSelectbox { margin-bottom: -15px; }</style>", unsafe_allow_html=True)
 
 @st.cache_resource
@@ -82,9 +81,9 @@ def get_gs():
 ws = get_gs().open("TMC-Sales-Assistant").worksheet("Holdings")
 df_h = pd.DataFrame(ws.get_all_records())
 prices = get_current_prices()
-fng, news_tag = get_intel()
+fng, news_list = get_intel_v2()
 
-# DASHBOARD GỌN NHẤT
+# DASHBOARD HEADER
 total_v, total_i, total_r = 0.0, 0.0, 0.0
 if not df_h.empty:
     df_h['Profit_Realized'] = pd.to_numeric(df_h['Profit_Realized'], errors='coerce').fillna(0)
@@ -100,16 +99,17 @@ for cat in STRATEGY.values():
 
 cash = 2000.0 - total_i + total_r
 st.markdown(f"""
-<div style="background:#161b22; padding:15px; border-radius:12px; border:1px solid #30363d;">
+<div style="background:#161b22; padding:15px; border-radius:12px; border:1px solid #30363d; margin-bottom:15px;">
     <div style="display:flex; justify-content:space-between; align-items:center;">
         <div><div style="font-size:10px; color:#8b949e;">PORTFOLIO</div><div style="font-size:24px; font-weight:900;">${(total_v+cash):,.0f}</div></div>
         <div style="text-align:right;"><div style="font-size:10px; color:#8b949e;">PnL</div><div style="font-size:20px; font-weight:900; color:{'#3fb950' if (total_v-total_i)>=0 else '#f85149'};">${(total_v-total_i):,.0f}</div></div>
     </div>
-    <div style="font-size:10px; color:#8b949e; margin-top:8px; border-top:1px solid #30363d; padding-top:8px; pointer-events: auto;">
-        🎭 F&G: {fng} | 📰 {news_tag}
-    </div>
 </div>
 """, unsafe_allow_html=True)
+
+# ACCORDION NEWS (CHẠM ĐỂ NỞ 3 TIN)
+with st.expander(f"🎭 F&G: {fng} | 📰 24H Intelligence (Latest News)", expanded=False):
+    st.markdown(f"""<div style="font-size:12px; line-height:1.8; pointer-events: auto;">{"<br>".join(news_list)}</div>""", unsafe_allow_html=True)
 
 t1, t2 = st.tabs(["🛡️ RWA", "🔍 HUNTER"])
 
