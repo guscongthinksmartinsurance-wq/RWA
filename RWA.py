@@ -6,7 +6,7 @@ import feedparser
 from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
 
-# --- 1. CONFIG: 13 CHIẾN MÃ (FIXED OM ID) ---
+# --- 1. DANH MỤC 13 CHIẾN MÃ ---
 STRATEGY = {
     'RWA': {
         'LINK': {'id': 'chainlink', 'tw': 35, 'ath': 52.8},
@@ -27,18 +27,18 @@ STRATEGY = {
     }
 }
 
-# --- 2. DATA ENGINE (FIXED OM FETCH) ---
+# --- 2. HÀM AN TOÀN & DỮ LIỆU ---
+def safe_f(val):
+    try: return float(val) if val is not None else 0.0
+    except: return 0.0
+
 @st.cache_data(ttl=120)
-def get_current_prices():
-    # Lấy cả mantra-chain và mantra để dự phòng
-    ids = ",".join([v['id'] for cat in STRATEGY.values() for v in cat.values()]) + ",mantra"
+def get_prices():
+    ids = "chainlink,ondo-finance,mantra-chain,mantra,quant-network,pendle,maple,centrifuge,solana,sui,sei-network,fetch-ai,arbitrum,pepe"
     try:
         r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd").json()
-        # Logic ép giá cho OM
-        if 'mantra' in r and 'mantra-chain' not in r:
-            r['mantra-chain'] = r['mantra']
-        elif 'mantra-chain' in r and 'mantra' not in r:
-            r['mantra'] = r['mantra-chain']
+        om_p = r.get('mantra-chain', {}).get('usd') or r.get('mantra', {}).get('usd') or 0.0
+        r['mantra-chain'] = {'usd': om_p}
         return r
     except: return {}
 
@@ -49,15 +49,15 @@ def get_hist_data(cg_id, days):
     except: return pd.DataFrame()
 
 @st.cache_data(ttl=600)
-def get_intel_v2():
+def get_intel():
     try:
         f = feedparser.parse("https://cointelegraph.com/rss/tag/bitcoin")
-        top_3 = [f"🔹 <a href='{e.link}' target='_blank' style='color:#58a6ff;text-decoration:none;'>{e.title[:55]}...</a>" for e in f.entries[:3]]
+        top_3 = [f"🔹 <a href='{e.link}' target='_blank' style='color:#58a6ff;text-decoration:none;'>{e.title[:50]}...</a>" for e in f.entries[:3]]
         fng = requests.get('https://api.alternative.me/fng/').json()['data'][0]['value']
         return fng, top_3
     except: return "50", ["⚠️ Market news updating..."]
 
-# --- 3. DECISION ENGINE ---
+# --- 3. BỘ NÃO PHÂN TÍCH ---
 def analyze_v24(df, cp, has_h, pnl, fng_val):
     if df.empty or len(df) < 5: return 0.0, 0.0, "READY", "#30363d", "Select period", 0.0
     sup, res = float(df['Close'].min()), float(df['Close'].max())
@@ -73,7 +73,7 @@ def analyze_v24(df, cp, has_h, pnl, fng_val):
     eff = (pnl / (df['Close'].pct_change().std() * 100)) if has_h and not df.empty else 0.0
     return sup, res, s, c, m, eff
 
-# --- 4. APP UI ---
+# --- 4. CẤU HÌNH APP & DỮ LIỆU G-SHEET ---
 st.set_page_config(page_title="Sovereign Terminal", layout="wide")
 st.markdown("<style>iframe { pointer-events: auto !important; } .stSelectbox { margin-bottom: -15px; }</style>", unsafe_allow_html=True)
 
@@ -81,46 +81,55 @@ st.markdown("<style>iframe { pointer-events: auto !important; } .stSelectbox { m
 def get_gs():
     return gspread.authorize(Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]))
 
-ws = get_gs().open("TMC-Sales-Assistant").worksheet("Holdings")
-df_h = pd.DataFrame(ws.get_all_records())
-prices = get_current_prices()
-fng, news_list = get_intel_v2()
+def load_data():
+    try:
+        ws = get_gs().open("TMC-Sales-Assistant").worksheet("Holdings")
+        df = pd.DataFrame(ws.get_all_records())
+        for c in ['Holdings', 'Entry_Price', 'Profit_Realized']:
+            if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+        return ws, df
+    except: return None, pd.DataFrame(columns=['Coin', 'Holdings', 'Entry_Price', 'Profit_Realized'])
 
-# DASHBOARD HEADER (PIE CHART REMOVED)
+ws, df_h = load_data()
+prices = get_prices()
+fng, news_list = get_intel()
+
+# --- 5. DASHBOARD HEADER ---
 total_v, total_i, total_r = 0.0, 0.0, 0.0
 if not df_h.empty:
-    df_h['Profit_Realized'] = pd.to_numeric(df_h['Profit_Realized'], errors='coerce').fillna(0)
-    total_r = df_h['Profit_Realized'].sum()
+    total_r = safe_f(df_h['Profit_Realized'].sum())
 
 for cat in STRATEGY.values():
     for name, info in cat.items():
-        cp = float(prices.get(info['id'], {}).get('usd', 0))
+        cp = safe_f(prices.get(info['id'], {}).get('usd', 0.0))
         u_row = df_h[df_h['Coin'] == name] if not df_h.empty else pd.DataFrame()
-        h = float(u_row['Holdings'].iloc[0]) if not u_row.empty else 0.0
-        e = float(u_row['Entry_Price'].iloc[0]) if not u_row.empty else 0.0
+        h = safe_f(u_row['Holdings'].iloc[0]) if not u_row.empty else 0.0
+        e = safe_f(u_row['Entry_Price'].iloc[0]) if not u_row.empty else 0.0
         total_v += (h * cp); total_i += (h * e)
 
 cash = 2000.0 - total_i + total_r
+pnl_val = total_v - total_i
+
 st.markdown(f"""
 <div style="background:#161b22; padding:15px; border-radius:12px; border:1px solid #30363d; margin-bottom:15px;">
     <div style="display:flex; justify-content:space-between; align-items:center;">
         <div><div style="font-size:10px; color:#8b949e;">PORTFOLIO VALUE</div><div style="font-size:26px; font-weight:900; color:white;">${(total_v+cash):,.0f}</div></div>
-        <div style="text-align:right;"><div style="font-size:10px; color:#8b949e;">PnL</div><div style="font-size:20px; font-weight:900; color:{'#3fb950' if (total_v-total_i)>=0 else '#f85149'};">${(total_v-total_i):,+.0f}</div></div>
+        <div style="text-align:right;"><div style="font-size:10px; color:#8b949e;">PnL</div><div style="font-size:20px; font-weight:900; color:{'#3fb950' if pnl_val>=0 else '#f85149'};">${pnl_val:,.0f}</div></div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# ACCORDION NEWS (CHẠM ĐỂ NỞ 3 TIN)
 with st.expander(f"🎭 F&G: {fng} | 📰 24H Intelligence (Latest News)", expanded=False):
     st.markdown(f"""<div style="font-size:12px; line-height:1.8; pointer-events: auto;">{"<br>".join(news_list)}</div>""", unsafe_allow_html=True)
 
+# --- 6. RENDER CARDS ---
 t1, t2 = st.tabs(["🛡️ RWA", "🔍 HUNTER"])
 
-def render_elite(name, info):
-    cp = float(prices.get(info['id'], {}).get('usd', 0))
+def render_coin(name, info):
+    cp = safe_f(prices.get(info['id'], {}).get('usd', 0.0))
     u_row = df_h[df_h['Coin'] == name] if not df_h.empty else pd.DataFrame()
-    h = float(u_row['Holdings'].iloc[0]) if not u_row.empty else 0.0
-    e = float(u_row['Entry_Price'].iloc[0]) if not u_row.empty else 0.0
+    h = safe_f(u_row['Holdings'].iloc[0]) if not u_row.empty else 0.0
+    e = safe_f(u_row['Entry_Price'].iloc[0]) if not u_row.empty else 0.0
     pnl = ((cp/e)-1)*100 if e > 0 else 0.0
     p_fmt = f"{cp:.5f}" if cp < 1 else f"{cp:.3f}"
     
@@ -151,6 +160,6 @@ def render_elite(name, info):
     st.markdown(html, unsafe_allow_html=True)
 
 with t1:
-    for n, i in STRATEGY['RWA'].items(): render_elite(n, i)
+    for n, i in STRATEGY['RWA'].items(): render_coin(n, i)
 with t2:
-    for n, i in STRATEGY['HUNTER'].items(): render_elite(n, i)
+    for n, i in STRATEGY['HUNTER'].items(): render_coin(n, i)
