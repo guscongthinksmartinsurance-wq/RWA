@@ -6,12 +6,12 @@ import feedparser
 from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
 
-# --- 1. CONFIG: 13 CHIẾN MÃ (SỬA ID OM THÀNH MANTRA ĐỂ LẤY GIÁ CHUẨN) ---
+# --- 1. CONFIG: 13 CHIẾN MÃ ---
 STRATEGY = {
     'RWA': {
         'LINK': {'id': 'chainlink', 'tw': 35, 'ath': 52.8},
         'ONDO': {'id': 'ondo-finance', 'tw': 20, 'ath': 1.48},
-        'OM': {'id': 'mantra', 'tw': 15, 'ath': 6.16}, # Đổi ID gốc thành mantra
+        'OM': {'id': 'mantra-chain', 'tw': 15, 'ath': 6.16}, 
         'QNT': {'id': 'quant-network', 'tw': 10, 'ath': 428.0},
         'PENDLE': {'id': 'pendle', 'tw': 10, 'ath': 7.52},
         'SYRUP': {'id': 'maple', 'tw': 5, 'ath': 2.10},
@@ -27,31 +27,39 @@ STRATEGY = {
     }
 }
 
-# --- 2. HÀM AN TOÀN & DATA ENGINE ---
+# --- 2. HÀM AN TOÀN & ĐỘC LẬP GIÁ ---
 def safe_f(val):
     try: return float(val) if val is not None else 0.0
     except: return 0.0
 
 @st.cache_data(ttl=120)
-def get_prices():
-    # Gọi cả 2 ID để đảm bảo không trượt phát nào
-    ids = "chainlink,ondo-finance,mantra,mantra-chain,quant-network,pendle,maple,centrifuge,solana,sui,sei-network,fetch-ai,arbitrum,pepe"
+def get_all_prices():
+    # Bước 1: Gọi 12 đồng (trừ OM)
+    other_ids = "chainlink,ondo-finance,quant-network,pendle,maple,centrifuge,solana,sui,sei-network,fetch-ai,arbitrum,pepe"
+    prices = {}
     try:
-        r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd").json()
-        # FALLBACK: Nếu mantra-chain rỗng thì lấy từ mantra và ngược lại
-        om_price = r.get('mantra', {}).get('usd') or r.get('mantra-chain', {}).get('usd') or 0.0
-        r['mantra'] = {'usd': om_price}
-        r['mantra-chain'] = {'usd': om_price}
-        return r
-    except: return {}
+        r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={other_ids}&vs_currencies=usd").json()
+        prices.update(r)
+    except: pass
+    
+    # Bước 2: Gọi RIÊNG OM (Chiến thuật độc lập)
+    try:
+        r_om = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=mantra-chain&vs_currencies=usd").json()
+        if 'mantra-chain' in r_om:
+            prices['mantra-chain'] = r_om['mantra-chain']
+        else:
+            # Fallback cuối cùng nếu mantra-chain không phản hồi
+            r_om_alt = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=mantra&vs_currencies=usd").json()
+            prices['mantra-chain'] = r_om_alt.get('mantra', {'usd': 0.0})
+    except:
+        prices['mantra-chain'] = {'usd': 0.0}
+        
+    return prices
 
 def get_hist_data(cg_id, days):
-    # FALLBACK cho dữ liệu lịch sử
     try:
         url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart?vs_currency=usd&days={days}"
         r = requests.get(url).json()
-        if 'prices' not in r and cg_id == 'mantra': # Nếu mantra lỗi lịch sử, thử mantra-chain
-            r = requests.get(f"https://api.coingecko.com/api/v3/coins/mantra-chain/market_chart?vs_currency=usd&days={days}").json()
         return pd.DataFrame({'Close': [x[1] for x in r['prices']], 'Volume': [x[1] for x in r['total_volumes']]})
     except: return pd.DataFrame()
 
@@ -65,21 +73,23 @@ def get_intel():
     except: return "50", ["⚠️ News update pending..."]
 
 # --- 3. BỘ NÃO PHÂN TÍCH ---
-def analyze_v24(df, cp, has_h, pnl, fng_val):
+def analyze_v25(df, cp, has_h, pnl, fng_val):
     if df.empty or len(df) < 5: return 0.0, 0.0, "READY", "#30363d", "Select period", 0.0
     sup, res = float(df['Close'].min()), float(df['Close'].max())
     delta = df['Close'].diff(); gain = delta.where(delta > 0, 0).rolling(14).mean()
     loss = delta.where(delta < 0, 0).abs().rolling(14).mean()
     rsi = (100 - (100 / (1 + (gain/(loss + 1e-10))))).iloc[-1]
+    
     if rsi < 35: s, c, m = "STRONG BUY", "#3fb950", "RSI LOW • SUPPORT"
     elif rsi > 75: s, c, m = "TAKE PROFIT", "#f85149", "OVERBOUGHT"
     elif rsi < 50 and cp <= df['Close'].rolling(min(len(df), 20)).mean().iloc[-1]: s, c, m = "ACCUMULATE", "#1f6feb", "DCA ZONE"
     else: s, c, m = "OBSERVE", "#30363d", "STABLE"
+    
     eff = (pnl / (df['Close'].pct_change().std() * 100)) if has_h and not df.empty else 0.0
     return sup, res, s, c, m, eff
 
 # --- 4. APP UI ---
-st.set_page_config(page_title="Sovereign Terminal", layout="wide")
+st.set_page_config(page_title="Sovereign V25", layout="wide")
 st.markdown("<style>iframe { pointer-events: auto !important; } .stSelectbox { margin-bottom: -15px; }</style>", unsafe_allow_html=True)
 
 @st.cache_resource
@@ -96,7 +106,7 @@ def load_data():
     except: return None, pd.DataFrame(columns=['Coin', 'Holdings', 'Entry_Price', 'Profit_Realized'])
 
 ws, df_h = load_data()
-prices = get_prices()
+prices = get_all_prices()
 fng, news_list = get_intel()
 
 # --- 5. DASHBOARD ---
@@ -114,7 +124,7 @@ pnl_val = total_v - total_i
 
 st.markdown(f"""<div style="background:#161b22; padding:15px; border-radius:12px; border:1px solid #30363d; margin-bottom:15px;"><div style="display:flex; justify-content:space-between; align-items:center;"><div><div style="font-size:10px; color:#8b949e;">PORTFOLIO VALUE</div><div style="font-size:26px; font-weight:900; color:white;">${(total_v+cash):,.0f}</div></div><div style="text-align:right;"><div style="font-size:10px; color:#8b949e;">PnL</div><div style="font-size:20px; font-weight:900; color:{'#3fb950' if pnl_val>=0 else '#f85149'};">${pnl_val:,.0f}</div></div></div></div>""", unsafe_allow_html=True)
 
-with st.expander(f"🎭 F&G: {fng} | 📰 Latest News"):
+with st.expander(f"🎭 F&G: {fng} | 📰 Latest Insights"):
     st.markdown(f"""<div style="font-size:12px; line-height:1.8; pointer-events: auto;">{"<br>".join(news_list)}</div>""", unsafe_allow_html=True)
 
 # --- 6. RENDER ---
@@ -130,7 +140,7 @@ def render_coin(name, info):
     st.markdown(f"<div style='margin-top:15px; font-weight:900; color:#58a6ff;'>{name} <span style='color:#8b949e; font-size:11px;'>• ${p_fmt} • {pnl:+.1f}%</span></div>", unsafe_allow_html=True)
     tl = st.selectbox("Scan", ["OFF", "7D", "30D", "90D", "1Y"], key=f"tl_{name}")
     d_val = {"7D":7, "30D":30, "90D":90, "1Y":365}.get(tl, 0)
-    sup, res, stt, col, msg, eff = analyze_v24(get_hist_data(info['id'], d_val) if d_val > 0 else pd.DataFrame(), cp, h>0, pnl, fng)
+    sup, res, stt, col, msg, eff = analyze_v25(get_hist_data(info['id'], d_val) if d_val > 0 else pd.DataFrame(), cp, h>0, pnl, fng)
     
     html = f"""<div style="background:#0d1117; padding:12px; border-radius:12px; border:1px solid #30363d; margin-bottom:10px;"><div style="display:grid; grid-template-columns:repeat(4,1fr); gap:5px; text-align:center;"><div><div style="font-size:7px; color:#8b949e;">INV</div><div style="font-size:10px; font-weight:700;">${h*e:,.0f}</div></div><div><div style="font-size:7px; color:#8b949e;">AVG</div><div style="font-size:10px; font-weight:700;">${e:.2f}</div></div><div><div style="font-size:7px; color:#8b949e;">SUP</div><div style="font-size:10px; font-weight:700; color:#3fb950;">{f"{sup:.2f}" if d_val>0 else "-"}</div></div><div><div style="font-size:7px; color:#8b949e;">RES</div><div style="font-size:10px; font-weight:700; color:#f85149;">{f"{res:.2f}" if d_val>0 else "-"}</div></div></div><div style="display:grid; grid-template-columns:repeat(3,1fr); gap:5px; text-align:center; border-top:1px solid #21262d; margin-top:8px; padding-top:8px;"><div><div style="font-size:7px; color:#8b949e;">ATH</div><div style="font-size:10px;">${info['ath']}</div></div><div><div style="font-size:7px; color:#8b949e;">TP1</div><div style="font-size:10px; color:#3fb950;">${cp*1.5:.2f}</div></div><div><div style="font-size:7px; color:#8b949e;">TP2</div><div style="font-size:10px; color:#d29922;">${cp*2:.2f}</div></div></div><div style="margin-top:10px; padding:8px; border-radius:6px; background:{col}; text-align:center;"><div style="font-size:11px; font-weight:900; color:white;">{stt}</div><div style="font-size:8px; color:white; opacity:0.8;">{msg} | EFF: {eff:.1f}</div></div></div>"""
     st.markdown(html, unsafe_allow_html=True)
