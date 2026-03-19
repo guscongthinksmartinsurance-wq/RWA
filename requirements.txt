@@ -5,3 +5,4 @@ gspread
 google-auth
 feedparser
 pandas_ta
+streamlit-autorefresh
