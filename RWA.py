@@ -34,7 +34,6 @@ def safe_f(val):
 
 @st.cache_data(ttl=120)
 def get_all_prices():
-    # Bước 1: Gọi 12 đồng (trừ OM)
     other_ids = "chainlink,ondo-finance,quant-network,pendle,maple,centrifuge,solana,sui,sei-network,fetch-ai,arbitrum,pepe"
     prices = {}
     try:
@@ -42,13 +41,11 @@ def get_all_prices():
         prices.update(r)
     except: pass
     
-    # Bước 2: Gọi RIÊNG OM (Chiến thuật độc lập)
     try:
         r_om = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=mantra-chain&vs_currencies=usd").json()
         if 'mantra-chain' in r_om:
             prices['mantra-chain'] = r_om['mantra-chain']
         else:
-            # Fallback cuối cùng nếu mantra-chain không phản hồi
             r_om_alt = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=mantra&vs_currencies=usd").json()
             prices['mantra-chain'] = r_om_alt.get('mantra', {'usd': 0.0})
     except:
