@@ -44,47 +44,55 @@ with d2:
 with d3: st.markdown(f'<div class="header-box"><div class="metric-label">Tâm lý F&G</div><div class="metric-value">{fng_val}/100</div></div>', unsafe_allow_html=True)
 with d4: st.markdown(f'<div class="header-box"><div class="metric-label">BTC Dom</div><div class="metric-value">{btc_dom:.1f}%</div></div>', unsafe_allow_html=True)
 
-# 3. STRATEGY TABS
-t1, t2 = st.tabs(["🛡️ RWA STRATEGY", "🔍 HUNTER STRATEGY"])
+# 3. HIỂN THỊ CHIẾN LƯỢC THEO HÀNG (BỎ TAB)
+def render_section(title, category):
+    st.subheader(title)
+    cols = st.columns(4)
+    for i, (symbol, info) in enumerate(STRATEGY[category].items()):
+        coin_m = prices.get(info['id'], {})
+        cp, chg, vol = coin_m.get('usd', 0), coin_m.get('usd_24h_change', 0), coin_m.get('usd_24h_vol', 0)
+        
+        # FIX PEPE: Định dạng giá thông minh
+        p_display = f"{cp:.8f}" if cp < 0.001 else f"{cp:,.4f}"
+        m_display = f"{0.0:.6f}" # Mặc định nếu chưa có tech
+        
+        tech = get_tech_radar(info['id'])
+        u = df_h[df_h['Coin'] == symbol] if not df_h.empty else pd.DataFrame()
+        h, e = (u['Holdings'].iloc[0], u['Entry_Price'].iloc[0]) if not u.empty else (0.0, 0.0)
+        pnl_p = ((cp/e)-1)*100 if e > 0 else 0
+        stt, col, msg, dist = analyze_v25_pro(cp, info['ath'], tech)
+        rsi, macd, ema20, sup, res = tech if tech else (0,0,0,0,0)
+        
+        # FIX MACD DISPLAY cho coin nhỏ
+        m_display = f"{macd:.6f}" if abs(macd) < 0.001 else f"{macd:.4f}"
 
-def render_tab(cat, tab_obj):
-    with tab_obj:
-        cols = st.columns(4)
-        for i, (symbol, info) in enumerate(STRATEGY[cat].items()):
-            coin_m = prices.get(info['id'], {})
-            cp, chg, vol = coin_m.get('usd', 0), coin_m.get('usd_24h_change', 0), coin_m.get('usd_24h_vol', 0)
-            tech = get_tech_radar(info['id'])
-            u = df_h[df_h['Coin'] == symbol] if not df_h.empty else pd.DataFrame()
-            h, e = (u['Holdings'].iloc[0], u['Entry_Price'].iloc[0]) if not u.empty else (0.0, 0.0)
-            pnl_p = ((cp/e)-1)*100 if e > 0 else 0
-            stt, col, msg, dist = analyze_v25_pro(cp, info['ath'], tech)
-            rsi, macd, ema20, sup, res = tech if tech else (0,0,0,0,0)
-
-            with cols[i % 4]:
-                st.markdown(f"""
-                <div class="coin-card">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <b style="font-size:16px; color:#58a6ff;">{symbol}</b>
-                        <span class="status-badge" style="background:{col}; color:white;">{stt}</span>
-                    </div>
-                    <h2 style="margin:10px 0; color:white;">${cp:,.4f} <small style="font-size:12px; color:{'#3fb950' if chg > 0 else '#f85149'};">{chg:+.2f}%</small></h2>
-                    <div style="font-size:11px; color:#8b949e; display:grid; grid-template-columns:1fr 1fr; gap:5px; line-height:1.6;">
-                        <span>Holdings: <b>{h:,.0f}</b></span>
-                        <span>PnL: <b style="color:{'#3fb950' if pnl_p >= 0 else '#f85149'};">{pnl_p:+.1f}%</b></span>
-                        <span>Vol 24h: <b>${vol/1e6:.1f}M</b></span>
-                        <span>RSI: <b>{rsi:.1f}</b></span>
-                        <span>MACD: <b style="color:{'#3fb950' if macd>0 else '#f85149'};">{macd:.4f}</b></span>
-                        <span>Cách ATH: <b>{dist:.1f}%</b></span>
-                        <span style="color:#3fb950;">SUP: {sup:,.2f}</span>
-                        <span style="color:#f85149;">RES: {res:,.2f}</span>
-                    </div>
-                    <div style="margin-top:12px; font-size:11px; border-top:1px solid #30363d; padding-top:10px; display:flex; justify-content:space-between;">
-                        <span style="color:#3fb950; font-weight:bold;">TP1: ${cp*1.5:,.2f}</span>
-                        <span style="color:#d29922; font-weight:bold;">TP2: ${cp*2.0:,.2f}</span>
-                    </div>
-                    <p style="font-size:11px; color:{col}; margin-top:10px; font-style: italic;">💡 {msg}</p>
+        with cols[i % 4]:
+            st.markdown(f"""
+            <div class="coin-card">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <b style="font-size:16px; color:#58a6ff;">{symbol}</b>
+                    <span class="status-badge" style="background:{col}; color:white;">{stt}</span>
                 </div>
-                """, unsafe_allow_html=True)
+                <h2 style="margin:10px 0; color:white;">${p_display} <small style="font-size:12px; color:{'#3fb950' if chg > 0 else '#f85149'};">{chg:+.2f}%</small></h2>
+                <div style="font-size:11px; color:#8b949e; display:grid; grid-template-columns:1fr 1fr; gap:5px; line-height:1.6;">
+                    <span>Holdings: <b>{h:,.0f}</b></span>
+                    <span>PnL: <b style="color:{'#3fb950' if pnl_p >= 0 else '#f85149'};">{pnl_p:+.1f}%</b></span>
+                    <span>Vol 24h: <b>${vol/1e6:.1f}M</b></span>
+                    <span>RSI: <b>{rsi:.1f}</b></span>
+                    <span>MACD: <b style="color:{'#3fb950' if macd>0 else '#f85149'};">{m_display}</b></span>
+                    <span>Cách ATH: <b>{dist:.1f}%</b></span>
+                    <span style="color:#3fb950;">SUP: {sup:,.2f}</span>
+                    <span style="color:#f85149;">RES: {res:,.2f}</span>
+                </div>
+                <div style="margin-top:12px; font-size:11px; border-top:1px solid #30363d; padding-top:10px; display:flex; justify-content:space-between;">
+                    <span style="color:#3fb950; font-weight:bold;">TP1: ${cp*1.5:,.2f}</span>
+                    <span style="color:#d29922; font-weight:bold;">TP2: ${cp*2.0:,.2f}</span>
+                </div>
+                <p style="font-size:11px; color:{col}; margin-top:10px; font-style: italic;">💡 {msg}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
-render_tab('RWA', t1)
-render_tab('HUNTER', t2)
+# Hiển thị 2 hàng trên cùng 1 trang
+render_section("🛡️ RWA STRATEGY", "RWA")
+st.markdown("<br>", unsafe_allow_html=True)
+render_section("🔍 HUNTER STRATEGY", "HUNTER")
