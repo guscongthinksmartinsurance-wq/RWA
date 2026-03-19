@@ -9,7 +9,6 @@ import time
 import os
 import pickle
 
-# Cơ chế lưu trữ bền vững
 CACHE_FILE = "price_cache.pkl"
 
 def save_cache(data):
@@ -43,31 +42,31 @@ def load_data_from_sheet(sheet_name, worksheet_name):
 
 def get_market_data(coin_ids):
     full_data = load_cache()
-    fng, btc_d = "50", 50.0 # Đặt tên biến là btc_d
+    fng, btc_d = "50", 50.0
     try:
         ids = ",".join(coin_ids)
-        p_res = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true", timeout=10).json()
+        # Ép sàn trả thêm dữ liệu để tránh hụt mã
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true"
+        p_res = requests.get(url, timeout=10).json()
+        
         if p_res: 
             for c_id, val in p_res.items():
                 if c_id not in full_data: full_data[c_id] = {}
                 full_data[c_id].update(val)
             save_cache(full_data)
         
-        f_res = requests.get("https://api.alternative.me/fng/", timeout=10).json()
-        if 'data' in f_res: fng = f_res['data'][0]['value']
-        
-        g_res = requests.get("https://api.coingecko.com/api/v3/global", timeout=10).json()
-        if 'data' in g_res: btc_d = g_res['data']['market_cap_percentage']['btc']
+        fng = requests.get("https://api.alternative.me/fng/", timeout=10).json()['data'][0]['value']
+        btc_d = requests.get("https://api.coingecko.com/api/v3/global", timeout=10).json()['data']['market_cap_percentage']['btc']
     except: pass
     
-    return full_data, fng, btc_d # Trả về đúng tên biến btc_d
+    return full_data, fng, btc_d
 
 def get_tech_radar(coin_id):
     full_data = load_cache()
     current_time = time.time()
     cache_entry = full_data.get(coin_id, {})
     
-    # Dùng cache nếu chưa quá 5 phút
+    # Ưu tiên dùng Cache trong vòng 5 phút
     if 'rsi' in cache_entry and (current_time - cache_entry.get('last_update', 0) < 300):
         return cache_entry['rsi'], cache_entry['macd'], cache_entry['ema20'], cache_entry['sup'], cache_entry['res']
 
@@ -92,6 +91,7 @@ def get_tech_radar(coin_id):
             return rsi, macd, ema20, sup, res_val
     except: pass
     
+    # Nếu hụt, lấy lại cái cũ nhất trong sổ tay để Dashboard không bị trắng
     if 'rsi' in cache_entry:
         return cache_entry['rsi'], cache_entry['macd'], cache_entry['ema20'], cache_entry['sup'], cache_entry['res']
     return None
