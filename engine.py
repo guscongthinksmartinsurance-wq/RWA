@@ -42,9 +42,8 @@ def load_data_from_sheet(sheet_name, worksheet_name):
     except: return pd.DataFrame()
 
 def get_market_data(coin_ids):
-    # Tải dữ liệu từ sổ tay lên trước
     full_data = load_cache()
-    prices, fng, btc_d = {}, "50", 50.0
+    fng, btc_d = "50", 50.0 # Đặt tên biến là btc_d
     try:
         ids = ",".join(coin_ids)
         p_res = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true", timeout=10).json()
@@ -56,22 +55,24 @@ def get_market_data(coin_ids):
         
         f_res = requests.get("https://api.alternative.me/fng/", timeout=10).json()
         if 'data' in f_res: fng = f_res['data'][0]['value']
+        
         g_res = requests.get("https://api.coingecko.com/api/v3/global", timeout=10).json()
         if 'data' in g_res: btc_d = g_res['data']['market_cap_percentage']['btc']
     except: pass
-    return full_data, fng, btc_dom # full_data giờ đóng vai trò là prices
+    
+    return full_data, fng, btc_d # Trả về đúng tên biến btc_d
 
 def get_tech_radar(coin_id):
     full_data = load_cache()
     current_time = time.time()
     cache_entry = full_data.get(coin_id, {})
     
-    # Nếu đã có dữ liệu kỹ thuật và chưa quá 5 phút thì dùng luôn, không hỏi sàn
+    # Dùng cache nếu chưa quá 5 phút
     if 'rsi' in cache_entry and (current_time - cache_entry.get('last_update', 0) < 300):
         return cache_entry['rsi'], cache_entry['macd'], cache_entry['ema20'], cache_entry['sup'], cache_entry['res']
 
     try:
-        time.sleep(2.5) # Giữ nguyên mức sleep 2.5s anh đang dùng
+        time.sleep(2.5) 
         url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=30"
         data = requests.get(url, timeout=10).json()
         
@@ -82,7 +83,6 @@ def get_tech_radar(coin_id):
             ema20 = df.ta.ema(length=20).iloc[-1]
             sup, res_val = df['close'].min(), df['close'].max()
             
-            # Lưu vào sổ tay
             if coin_id not in full_data: full_data[coin_id] = {}
             full_data[coin_id].update({
                 'rsi': rsi, 'macd': macd, 'ema20': ema20, 
@@ -92,7 +92,6 @@ def get_tech_radar(coin_id):
             return rsi, macd, ema20, sup, res_val
     except: pass
     
-    # Nếu lỗi sàn, trả về dữ liệu cũ nhất trong sổ tay (nếu có)
     if 'rsi' in cache_entry:
         return cache_entry['rsi'], cache_entry['macd'], cache_entry['ema20'], cache_entry['sup'], cache_entry['res']
     return None
