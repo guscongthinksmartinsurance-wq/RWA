@@ -1,4 +1,3 @@
-# RWA.py - BẢN FIX LỖI HIỂN THỊ (V3.1)
 import streamlit as st
 import pandas as pd
 import feedparser
