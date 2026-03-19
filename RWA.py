@@ -92,7 +92,4 @@ def render_section(title, category):
             </div>
             """, unsafe_allow_html=True)
 
-# Hiển thị 2 hàng trên cùng 1 trang
-render_section("🛡️ RWA STRATEGY", "RWA")
 st.markdown("<br>", unsafe_allow_html=True)
-render_section("🔍 HUNTER STRATEGY", "HUNTER")
