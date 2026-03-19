@@ -5,6 +5,7 @@ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 import pandas_ta as ta
+import time
 
 @st.cache_resource
 def get_gspread_client():
@@ -40,15 +41,21 @@ def get_market_data(coin_ids):
 @st.cache_data(ttl=300)
 def get_tech_radar(coin_id):
     try:
+        time.sleep(1.5) 
+        
         url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=30"
         data = requests.get(url, timeout=10).json()
-        if 'prices' not in data: return None
+        
+        if 'prices' not in data:
+            return None
+            
         df = pd.DataFrame([p[1] for p in data['prices']], columns=['close'])
         rsi = df.ta.rsi(length=14).iloc[-1]
         macd = df.ta.macd().iloc[-1][0]
         ema20 = df.ta.ema(length=20).iloc[-1]
         return rsi, macd, ema20, df['close'].min(), df['close'].max()
-    except: return None
+    except:
+        return None
 
 def analyze_v25_pro(cp, ath, tech):
     if not tech: return "WAITING", "#8b949e", "Thiếu dữ liệu...", 0
