@@ -1,8 +1,7 @@
 streamlit
 pandas
-yfinance
+requests
 gspread
 google-auth
-requests
 feedparser
-plotly
+pandas_ta
