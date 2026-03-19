@@ -41,7 +41,7 @@ def get_market_data(coin_ids):
 @st.cache_data(ttl=300)
 def get_tech_radar(coin_id):
     try:
-        time.sleep(1.5) 
+        time.sleep(2.5) 
         
         url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=30"
         data = requests.get(url, timeout=10).json()
