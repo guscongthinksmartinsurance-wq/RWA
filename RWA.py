@@ -9,7 +9,6 @@ from engine import load_data_from_sheet, get_market_data, get_tech_radar, analyz
 st.set_page_config(page_title="Sovereign V25", layout="wide", initial_sidebar_state="expanded")
 apply_custom_style()
 
-# --- SIDEBAR (GIỮ NGUYÊN BẢN CỦA ANH) ---
 with st.sidebar:
     st.markdown("<style>[data-testid='stSidebar']{background-color:#161b22;}.s-news{color:#58a6ff;font-weight:bold;font-size:13px;}.s-link{color:#c9d1d9;font-size:12px;text-decoration:none;}</style>", unsafe_allow_html=True)
     st.header("📰 Tin tức Chiến lược")
@@ -46,7 +45,7 @@ with d4: st.markdown(f'<div class="header-box"><div class="metric-label">BTC Dom
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 3. HIỂN THỊ TẤT CẢ COIN (DÀN HÀNG NGANG)
+# 3. HIỂN THỊ TẤT CẢ COIN
 all_coins = {}
 for cat in STRATEGY.values(): all_coins.update(cat)
 
@@ -64,7 +63,6 @@ for i, (symbol, info) in enumerate(all_coins.items()):
     stt, col, msg, dist = analyze_v25_pro(cp, info['ath'], tech)
     rsi, macd, ema20, sup, res = tech if tech else (0,0,0,0,0)
     
-    # Định dạng hiển thị chuẩn (Fix PEPE và MACD nhỏ)
     p_display = f"{cp:.8f}" if cp < 0.001 else f"{cp:,.4f}"
     m_display = f"{macd:.6f}" if abs(macd) < 0.001 else f"{macd:.4f}"
 
