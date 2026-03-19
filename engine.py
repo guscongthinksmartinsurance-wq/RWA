@@ -16,9 +16,14 @@ def load_data_from_sheet(sheet_name, worksheet_name):
         client = get_gspread_client()
         sh = client.open(sheet_name)
         worksheet = sh.worksheet(worksheet_name)
-        return pd.DataFrame(worksheet.get_all_records())
+        df = pd.DataFrame(worksheet.get_all_records())
+        
+        # Ép kiểu dữ liệu về số như file cũ của anh
+        for c in ['Holdings', 'Entry_Price']:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+        return df
     except Exception as e:
-        st.error(f"Lỗi kết nối Sheet {worksheet_name}: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=120)
@@ -31,7 +36,7 @@ def get_market_data(coin_ids_list):
         return {}
 
 def analyze_v25(current_price, ath):
-    dist_ath = ((ath - current_price) / ath) * 100
+    dist_ath = ((ath - current_price) / ath) * 100 if ath > 0 else 0
     if dist_ath > 70:
         return "ACCUMULATE", "#3fb950", "Vùng gom cực đẹp", dist_ath
     elif dist_ath > 40:
