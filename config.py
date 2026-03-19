@@ -3,7 +3,7 @@ STRATEGY = {
     'RWA': {
         'LINK': {'id': 'chainlink', 'ath': 52.8, 'desc': 'Vua Oracle - Xương sống RWA'},
         'ONDO': {'id': 'ondo-finance', 'ath': 1.48, 'desc': 'Dẫn đầu mảng trái phiếu mã hóa'},
-        'OM': {'id': 'mantra-chain', 'ath': 6.16, 'desc': 'Bất động sản on-chain'},
+        'OM': {'id': 'mantra-dao', 'ath': 6.16, 'desc': 'Bất động sản on-chain'},
         'ENA': {'id': 'ethena', 'ath': 1.52, 'desc': 'Tối ưu lợi nhuận Stablecoin'}
     },
     'HUNTER': {
