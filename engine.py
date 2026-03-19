@@ -15,30 +15,27 @@ def load_data_from_sheet(sheet_name, worksheet_name):
     try:
         client = get_gspread_client()
         sh = client.open(sheet_name)
-        worksheet = sh.worksheet(worksheet_name)
-        df = pd.DataFrame(worksheet.get_all_records())
-        
-        # Ép kiểu dữ liệu về số như file cũ của anh
+        df = pd.DataFrame(sh.worksheet(worksheet_name).get_all_records())
         for c in ['Holdings', 'Entry_Price']:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
         return df
-    except Exception as e:
+    except:
         return pd.DataFrame()
 
 @st.cache_data(ttl=120)
-def get_market_data(coin_ids_list):
-    ids = ",".join(coin_ids_list)
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true"
-    try:
-        return requests.get(url).json()
-    except:
-        return {}
+def get_market_data(coin_ids):
+    ids = ",".join(coin_ids)
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true"
+    # Thêm logic lấy F&G, BTC.D và Funding Rate ở đây...
+    return requests.get(url).json()
 
-def analyze_v25(current_price, ath):
+def analyze_v25_pro(current_price, ath, rsi, macd, ema20):
+    # Logic kết hợp kỹ thuật + tâm lý của anh Công
     dist_ath = ((ath - current_price) / ath) * 100 if ath > 0 else 0
-    if dist_ath > 70:
-        return "ACCUMULATE", "#3fb950", "Vùng gom cực đẹp", dist_ath
-    elif dist_ath > 40:
-        return "HOLD", "#d29922", "Đang tích lũy, kiên nhẫn", dist_ath
-    return "TAKE PROFIT", "#f85149", "Cẩn thận vùng đỉnh", dist_ath
+    
+    if rsi < 35 and current_price > ema20:
+        return "ACCUMULATE", "#3fb950", "Dòng tiền đang nén, vùng gom đẹp"
+    elif rsi > 70:
+        return "BE CAREFUL", "#f85149", "Đám đông đang hưng phấn quá đà"
+    return "HOLD", "#d29922", "Kiên nhẫn gồng, chưa có biến động lạ"
