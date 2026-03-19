@@ -1,3 +1,4 @@
+# RWA.py
 import streamlit as st
 import pandas as pd
 import feedparser
@@ -8,7 +9,7 @@ from engine import load_data_from_sheet, get_market_data, get_tech_radar, analyz
 st.set_page_config(page_title="Sovereign V25", layout="wide", initial_sidebar_state="expanded")
 apply_custom_style()
 
-# --- SIDEBAR (SẠCH SẼ) ---
+# --- SIDEBAR (GIỮ NGUYÊN BẢN CỦA ANH) ---
 with st.sidebar:
     st.markdown("<style>[data-testid='stSidebar']{background-color:#161b22;}.s-news{color:#58a6ff;font-weight:bold;font-size:13px;}.s-link{color:#c9d1d9;font-size:12px;text-decoration:none;}</style>", unsafe_allow_html=True)
     st.header("📰 Tin tức Chiến lược")
@@ -21,7 +22,7 @@ with st.sidebar:
 # 1. DATA
 df_h = load_data_from_sheet(SHEET_NAME, WORKSHEET_NAME)
 all_ids = [info['id'] for cat in STRATEGY.values() for info in cat.values()]
-prices, fng_val, btc_dom = get_market_data(all_ids)
+prices_cache, fng_val, btc_dom = get_market_data(all_ids)
 
 # TÍNH TỔNG TÀI SẢN
 total_v, total_pnl = 0, 0
@@ -29,7 +30,7 @@ if not df_h.empty:
     for _, r in df_h.iterrows():
         c_id = next((v['id'] for cat in STRATEGY.values() for k, v in cat.items() if k == r['Coin']), None)
         if c_id:
-            cp = prices.get(c_id, {}).get('usd', 0)
+            cp = prices_cache.get(c_id, {}).get('usd', 0)
             total_v += r['Holdings'] * cp
             total_pnl += (cp - r['Entry_Price']) * r['Holdings']
 
@@ -45,17 +46,16 @@ with d4: st.markdown(f'<div class="header-box"><div class="metric-label">BTC Dom
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 3. HIỂN THỊ TẤT CẢ COIN (DÀN HÀNG NGANG, KHÔNG TIÊU ĐỀ)
+# 3. HIỂN THỊ TẤT CẢ COIN (DÀN HÀNG NGANG)
 all_coins = {}
-for cat in STRATEGY.values():
-    all_coins.update(cat)
+for cat in STRATEGY.values(): all_coins.update(cat)
 
-cols = st.columns(4) # Chia 4 cột mỗi hàng
+cols = st.columns(4)
 for i, (symbol, info) in enumerate(all_coins.items()):
-    coin_m = prices.get(info['id'], {})
-    cp, chg, vol = coin_m.get('usd', 0), coin_m.get('usd_24h_change', 0), coin_m.get('usd_24h_vol', 0)
-    
-    p_display = f"{cp:.8f}" if cp < 0.001 else f"{cp:,.4f}"
+    coin_data = prices_cache.get(info['id'], {})
+    cp = coin_data.get('usd', 0)
+    chg = coin_data.get('usd_24h_change', 0)
+    vol = coin_data.get('usd_24h_vol', 0)
     
     tech = get_tech_radar(info['id'])
     u = df_h[df_h['Coin'] == symbol] if not df_h.empty else pd.DataFrame()
@@ -64,6 +64,8 @@ for i, (symbol, info) in enumerate(all_coins.items()):
     stt, col, msg, dist = analyze_v25_pro(cp, info['ath'], tech)
     rsi, macd, ema20, sup, res = tech if tech else (0,0,0,0,0)
     
+    # Định dạng hiển thị chuẩn (Fix PEPE và MACD nhỏ)
+    p_display = f"{cp:.8f}" if cp < 0.001 else f"{cp:,.4f}"
     m_display = f"{macd:.6f}" if abs(macd) < 0.001 else f"{macd:.4f}"
 
     with cols[i % 4]:
