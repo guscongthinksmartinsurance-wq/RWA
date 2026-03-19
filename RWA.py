@@ -4,9 +4,14 @@ import feedparser
 from config import STRATEGY, SHEET_NAME, WORKSHEET_NAME
 from style import apply_custom_style
 from engine import load_data_from_sheet, get_market_data, get_tech_radar, analyze_v25_pro
+# 1. Thêm dòng này để gọi lệnh tự động làm mới
+from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="Sovereign V25", layout="wide", initial_sidebar_state="expanded")
 apply_custom_style()
+
+# 2. Tự động làm mới App mỗi 30 giây để săn đủ 8 con coin
+st_autorefresh(interval=30000, key="datarefresh")
 
 with st.sidebar:
     st.markdown("<style>[data-testid='stSidebar']{background-color:#161b22;}.s-news{color:#58a6ff;font-weight:bold;font-size:13px;}.s-link{color:#c9d1d9;font-size:12px;text-decoration:none;}</style>", unsafe_allow_html=True)
@@ -17,7 +22,7 @@ with st.sidebar:
     st.markdown("---")
     st.write("Sovereign V25 - Anh Công")
 
-# 1. DATA
+# DATA
 df_h = load_data_from_sheet(SHEET_NAME, WORKSHEET_NAME)
 all_ids = [info['id'] for cat in STRATEGY.values() for info in cat.values()]
 prices_cache, fng_val, btc_dom = get_market_data(all_ids)
@@ -32,7 +37,7 @@ if not df_h.empty:
             total_v += r['Holdings'] * cp
             total_pnl += (cp - r['Entry_Price']) * r['Holdings']
 
-# 2. COMMAND CENTER
+# COMMAND CENTER
 st.title("🛡️ SOVEREIGN COMMAND CENTER")
 d1, d2, d3, d4 = st.columns(4)
 with d1: st.markdown(f'<div class="header-box"><div class="metric-label">Tổng Tài Sản</div><div class="metric-value">${total_v:,.2f}</div></div>', unsafe_allow_html=True)
@@ -44,7 +49,7 @@ with d4: st.markdown(f'<div class="header-box"><div class="metric-label">BTC Dom
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 3. HIỂN THỊ TẤT CẢ COIN
+# HIỂN THỊ TẤT CẢ COIN
 all_coins = {}
 for cat in STRATEGY.values(): all_coins.update(cat)
 
