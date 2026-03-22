@@ -41,23 +41,38 @@ def load_data_from_sheet(sheet_name, worksheet_name):
     except: return pd.DataFrame()
 
 def get_market_data(coin_ids):
+    # Luôn load cache lên trước để có cái "phòng thân"
     full_data = load_cache()
     fng, btc_d = "50", 50.0
+    
     try:
         ids = ",".join(coin_ids)
-        # Ép sàn trả thêm dữ liệu để tránh hụt mã
         url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true"
-        p_res = requests.get(url, timeout=10).json()
         
-        if p_res: 
-            for c_id, val in p_res.items():
-                if c_id not in full_data: full_data[c_id] = {}
-                full_data[c_id].update(val)
-            save_cache(full_data)
+        # Tăng timeout lên 15 giây vì dạo này mạng quốc tế hơi chập chờn
+        response = requests.get(url, timeout=15)
         
-        fng = requests.get("https://api.alternative.me/fng/", timeout=10).json()['data'][0]['value']
-        btc_d = requests.get("https://api.coingecko.com/api/v3/global", timeout=10).json()['data']['market_cap_percentage']['btc']
-    except: pass
+        if response.status_code == 200:
+            p_res = response.json()
+            if p_res:
+                for c_id, val in p_res.items():
+                    if c_id not in full_data: full_data[c_id] = {}
+                    full_data[c_id].update(val)
+                    # Gán thêm nhãn thời gian cập nhật giá
+                    full_data[c_id]['last_price_update'] = time.time()
+                save_cache(full_data)
+        
+        # Tương tự cho FnG và BTC Dom, lỗi thì dùng mặc định không để app chết
+        fng_res = requests.get("https://api.alternative.me/fng/", timeout=10).json()
+        fng = fng_res['data'][0]['value']
+        
+        btc_res = requests.get("https://api.coingecko.com/api/v3/global", timeout=10).json()
+        btc_d = btc_res['data']['market_cap_percentage']['btc']
+        
+    except Exception as e:
+        print(f"Lỗi lấy giá tổng quát: {e}")
+        # Nếu lỗi, cứ để nó trả về full_data (lúc này là dữ liệu từ load_cache)
+        pass
     
     return full_data, fng, btc_d
 
