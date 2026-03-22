@@ -64,36 +64,57 @@ def get_market_data(coin_ids):
 def get_tech_radar(coin_id):
     full_data = load_cache()
     current_time = time.time()
+    
+    # 1. Lấy dữ liệu từ Cache (Ưu tiên số 1)
     cache_entry = full_data.get(coin_id, {})
     
-    # Ưu tiên dùng Cache trong vòng 5 phút
-    if 'rsi' in cache_entry and (current_time - cache_entry.get('last_update', 0) < 300):
+    # Nếu dữ liệu còn mới (dưới 15 phút), trả về luôn để app chạy siêu tốc
+    if 'rsi' in cache_entry and (current_time - cache_entry.get('last_update', 0) < 900):
         return cache_entry['rsi'], cache_entry['macd'], cache_entry['ema20'], cache_entry['sup'], cache_entry['res']
 
+    # 2. Cơ chế "Cập nhật thông minh": Kiểm tra xem gần đây có con nào vừa gọi API chưa
+    # Nếu vừa gọi cách đây dưới 5 giây, thì con này tạm thời dùng lại cache cũ để tránh bị Block IP
+    last_global_call = full_data.get('last_global_api_call', 0)
+    if (current_time - last_global_call) < 5: 
+        if 'rsi' in cache_entry:
+            return cache_entry['rsi'], cache_entry['macd'], cache_entry['ema20'], cache_entry['sup'], cache_entry['res']
+        return None
+
+    # 3. Chỉ gọi API khi thực sự cần và đảm bảo khoảng cách an toàn
     try:
-        time.sleep(2.5) 
         url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=30"
-        data = requests.get(url, timeout=10).json()
+        res = requests.get(url, timeout=15) # Tăng timeout lên một chút cho chắc
         
-        if 'prices' in data:
-            df = pd.DataFrame([p[1] for p in data['prices']], columns=['close'])
-            rsi = df.ta.rsi(length=14).iloc[-1]
-            macd = df.ta.macd().iloc[-1][0]
-            ema20 = df.ta.ema(length=20).iloc[-1]
-            sup, res_val = df['close'].min(), df['close'].max()
-            
-            if coin_id not in full_data: full_data[coin_id] = {}
-            full_data[coin_id].update({
-                'rsi': rsi, 'macd': macd, 'ema20': ema20, 
-                'sup': sup, 'res': res_val, 'last_update': current_time
-            })
-            save_cache(full_data)
-            return rsi, macd, ema20, sup, res_val
-    except: pass
+        if res.status_code == 200:
+            data = res.json()
+            if 'prices' in data:
+                df = pd.DataFrame([p[1] for p in data['prices']], columns=['close'])
+                rsi = df.ta.rsi(length=14).iloc[-1]
+                macd_df = df.ta.macd()
+                macd = macd_df.iloc[-1][0]
+                ema20 = df.ta.ema(length=20).iloc[-1]
+                sup, res_val = df['close'].min(), df['close'].max()
+                
+                # Lưu vào cache
+                if coin_id not in full_data: full_data[coin_id] = {}
+                full_data[coin_id].update({
+                    'rsi': rsi, 'macd': macd, 'ema20': ema20, 
+                    'sup': sup, 'res': res_val, 'last_update': current_time
+                })
+                full_data['last_global_api_call'] = current_time # Đánh dấu vừa gọi API xong
+                save_cache(full_data)
+                
+                return rsi, macd, ema20, sup, res_val
+        elif res.status_code == 429:
+            # Nếu bị chặn, ghi log nhẹ và dùng tạm cache cũ
+            print(f"Rate limit hit for {coin_id}, using stale cache.")
+    except Exception as e:
+        print(f"Error fetching tech for {coin_id}: {e}")
     
-    # Nếu hụt, lấy lại cái cũ nhất trong sổ tay để Dashboard không bị trắng
+    # 4. Cứu cánh cuối cùng: Nếu API lỗi thì bốc dữ liệu cũ nhất ra dùng, không để app trắng
     if 'rsi' in cache_entry:
         return cache_entry['rsi'], cache_entry['macd'], cache_entry['ema20'], cache_entry['sup'], cache_entry['res']
+    
     return None
 
 def analyze_v25_pro(cp, ath, tech):
