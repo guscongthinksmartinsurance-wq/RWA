@@ -34,14 +34,21 @@ def get_gspread_client():
 def load_data_from_sheet(sheet_name, worksheet_name):
     try:
         client = get_gspread_client()
-        df = pd.DataFrame(client.open(sheet_name).worksheet(worksheet_name).get_all_records())
-        for c in ['Holdings', 'Entry_Price']:
-            if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+        data = client.open(sheet_name).worksheet(worksheet_name).get_all_records()
+        df = pd.DataFrame(data)
+        
+        cols_to_fix = ['Holdings', 'Entry_Price']
+        for c in cols_to_fix:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+                df.fillna({c: 0.0}, inplace=True)
+                
         return df
-    except: return pd.DataFrame()
+    except Exception as e:
+        print(f"Lỗi đọc Google Sheet: {e}")
+        return pd.DataFrame()
 
 def get_market_data(coin_ids):
-    # Luôn load cache lên trước để có cái "phòng thân"
     full_data = load_cache()
     fng, btc_d = "50", 50.0
     
@@ -49,7 +56,6 @@ def get_market_data(coin_ids):
         ids = ",".join(coin_ids)
         url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true"
         
-        # Tăng timeout lên 15 giây vì dạo này mạng quốc tế hơi chập chờn
         response = requests.get(url, timeout=15)
         
         if response.status_code == 200:
@@ -58,11 +64,9 @@ def get_market_data(coin_ids):
                 for c_id, val in p_res.items():
                     if c_id not in full_data: full_data[c_id] = {}
                     full_data[c_id].update(val)
-                    # Gán thêm nhãn thời gian cập nhật giá
                     full_data[c_id]['last_price_update'] = time.time()
                 save_cache(full_data)
         
-        # Tương tự cho FnG và BTC Dom, lỗi thì dùng mặc định không để app chết
         fng_res = requests.get("https://api.alternative.me/fng/", timeout=10).json()
         fng = fng_res['data'][0]['value']
         
@@ -71,7 +75,6 @@ def get_market_data(coin_ids):
         
     except Exception as e:
         print(f"Lỗi lấy giá tổng quát: {e}")
-        # Nếu lỗi, cứ để nó trả về full_data (lúc này là dữ liệu từ load_cache)
         pass
     
     return full_data, fng, btc_d
