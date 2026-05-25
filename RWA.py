@@ -3,14 +3,13 @@ import pandas as pd
 import feedparser
 from config import STRATEGY, SHEET_NAME, WORKSHEET_NAME
 from style import apply_custom_style
-from engine import load_data_from_sheet, get_market_data, get_tech_radar, analyze_v25_pro
-# 1. Thêm dòng này để gọi lệnh tự động làm mới
+# Gọi hàm tập trung mới get_all_tech_data từ engine
+from engine import load_data_from_sheet, get_market_data, get_all_tech_data, analyze_v25_pro
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="Cong Thai", layout="wide", initial_sidebar_state="expanded")
 apply_custom_style()
 
-# 2. Tự động làm mới App mỗi 90 giây để săn dữ liệu
 st_autorefresh(interval=90000, key="datarefresh")
 
 with st.sidebar:
@@ -20,12 +19,15 @@ with st.sidebar:
     for e in f.entries[:3]:
         st.markdown(f"<div class='s-news'>{e.title}</div><a class='s-link' href='{e.link}'>Xem chi tiết →</a><br><br>", unsafe_allow_html=True)
     st.markdown("---")
-    st.write("CONG THAI")
+    st.write("Sovereign V25 - Anh Công")
 
 # DATA
 df_h = load_data_from_sheet(SHEET_NAME, WORKSHEET_NAME)
 all_ids = [info['id'] for cat in STRATEGY.values() for info in cat.values()]
 prices_cache, fng_val, btc_dom = get_market_data(all_ids)
+
+# GỌI LỆNH LẤY CHỈ SỐ KỸ THUẬT TẬP TRUNG MỘT LẦN DUY NHẤT Ở ĐẦU TRANG
+global_tech_data = get_all_tech_data(STRATEGY)
 
 # TÍNH TỔNG TÀI SẢN
 total_v, total_pnl = 0, 0
@@ -38,7 +40,7 @@ if not df_h.empty:
             total_pnl += (cp - r['Entry_Price']) * r['Holdings']
 
 # COMMAND CENTER
-st.title("TÍCH LŨY")
+st.title("🛡️ SOVEREIGN COMMAND CENTER")
 d1, d2, d3, d4 = st.columns(4)
 with d1: st.markdown(f'<div class="header-box"><div class="metric-label">Tổng Tài Sản</div><div class="metric-value">${total_v:,.2f}</div></div>', unsafe_allow_html=True)
 with d2:
@@ -60,22 +62,19 @@ for i, (symbol, info) in enumerate(all_coins.items()):
     chg = coin_data.get('usd_24h_change', 0)
     vol = coin_data.get('usd_24h_vol', 0)
     
-    tech = get_tech_radar(info['id'])
+    # Bốc dữ liệu từ gói dữ liệu tập trung đã gọi ở đầu trang ra dùng
+    tech = global_tech_data.get(info['id'])
+    
     u = df_h[df_h['Coin'] == symbol] if not df_h.empty else pd.DataFrame()
     h, e = (u['Holdings'].iloc[0], u['Entry_Price'].iloc[0]) if not u.empty else (0.0, 0.0)
     pnl_p = ((cp/e)-1)*100 if e > 0 else 0
     
-    # Phân tích theo bộ lọc đa chỉ báo mới (EMA20 + EMA50 + RSI + MACD)
     stt, col, msg, dist = analyze_v25_pro(cp, info['ath'], tech)
-    
-    # Bốc tách an toàn 6 thông số kỹ thuật (đã thêm ema50) từ engine
     rsi, macd, ema20, ema50, sup, res = tech if tech else (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     
-    # XỬ LÝ ĐỊNH DẠNG CHUỖI AN TOÀN (Tách biệt hoàn toàn để tránh lỗi cú pháp dính dấu hai chấm)
     p_display = f"{cp:.8f}" if cp < 0.001 else f"{cp:,.4f}"
     m_display = f"{macd:.6f}" if abs(macd) < 0.001 else f"{macd:.4f}"
     
-    # Định dạng thông minh hiển thị nhiều số 0 cho coin giá nhỏ (như PEPE) và định dạng chuẩn cho SEI, LINK
     sup_display = f"{sup:,.6f}" if cp < 0.1 else f"{sup:,.2f}"
     res_display = f"{res:,.6f}" if cp < 0.1 else f"{res:,.2f}"
     tp1_display = f"{cp*1.5:,.6f}" if cp < 0.1 else f"{cp*1.5:,.2f}"
