@@ -4,12 +4,13 @@ import feedparser
 from config import STRATEGY, SHEET_NAME, WORKSHEET_NAME
 from style import apply_custom_style
 from engine import load_data_from_sheet, get_market_data, get_tech_radar, analyze_v25_pro
+# 1. Thêm dòng này để gọi lệnh tự động làm mới
 from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="Sovereign V25", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Cong Thai", layout="wide", initial_sidebar_state="expanded")
 apply_custom_style()
 
-# Tự động làm mới App mỗi 90 giây
+# 2. Tự động làm mới App mỗi 90 giây để săn dữ liệu
 st_autorefresh(interval=90000, key="datarefresh")
 
 with st.sidebar:
@@ -64,13 +65,21 @@ for i, (symbol, info) in enumerate(all_coins.items()):
     h, e = (u['Holdings'].iloc[0], u['Entry_Price'].iloc[0]) if not u.empty else (0.0, 0.0)
     pnl_p = ((cp/e)-1)*100 if e > 0 else 0
     
+    # Phân tích theo bộ lọc đa chỉ báo mới (EMA20 + EMA50 + RSI + MACD)
     stt, col, msg, dist = analyze_v25_pro(cp, info['ath'], tech)
     
-    # SỬA TẠI ĐÂY: Bốc tách đủ 6 biến (thêm ema50) từ hàm kỹ thuật để tránh crash app
+    # Bốc tách an toàn 6 thông số kỹ thuật (đã thêm ema50) từ engine
     rsi, macd, ema20, ema50, sup, res = tech if tech else (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     
+    # XỬ LÝ ĐỊNH DẠNG CHUỖI AN TOÀN (Tách biệt hoàn toàn để tránh lỗi cú pháp dính dấu hai chấm)
     p_display = f"{cp:.8f}" if cp < 0.001 else f"{cp:,.4f}"
     m_display = f"{macd:.6f}" if abs(macd) < 0.001 else f"{macd:.4f}"
+    
+    # Định dạng thông minh hiển thị nhiều số 0 cho coin giá nhỏ (như PEPE) và định dạng chuẩn cho SEI, LINK
+    sup_display = f"{sup:,.6f}" if cp < 0.1 else f"{sup:,.2f}"
+    res_display = f"{res:,.6f}" if cp < 0.1 else f"{res:,.2f}"
+    tp1_display = f"{cp*1.5:,.6f}" if cp < 0.1 else f"{cp*1.5:,.2f}"
+    tp2_display = f"{cp*2.0:,.6f}" if cp < 0.1 else f"{cp*2.0:,.2f}"
 
     with cols[i % 4]:
         st.markdown(f"""
@@ -87,12 +96,12 @@ for i, (symbol, info) in enumerate(all_coins.items()):
                 <span>RSI: <b>{rsi:.1f}</b></span>
                 <span>MACD: <b style="color:{'#3fb950' if macd>0 else '#f85149'};">{m_display}</b></span>
                 <span>Cách ATH: <b>{dist:.1f}%</b></span>
-                <span style="color:#3fb950;">SUP: {sup:,.4f if cp < 0.1 else :,.2f}</span>
-                <span style="color:#f85149;">RES: {res:,.4f if cp < 0.1 else :,.2f}</span>
+                <span style="color:#3fb950;">SUP: {sup_display}</span>
+                <span style="color:#f85149;">RES: {res_display}</span>
             </div>
             <div style="margin-top:12px; font-size:11px; border-top:1px solid #30363d; padding-top:10px; display:flex; justify-content:space-between;">
-                <span style="color:#3fb950; font-weight:bold;">TP1: ${cp*1.5:,.4f if cp < 0.1 else :,.2f}</span>
-                <span style="color:#d29922; font-weight:bold;">TP2: ${cp*2.0:,.4f if cp < 0.1 else :,.2f}</span>
+                <span style="color:#3fb950; font-weight:bold;">TP1: ${tp1_display}</span>
+                <span style="color:#d29922; font-weight:bold;">TP2: ${tp2_display}</span>
             </div>
             <p style="font-size:11px; color:{col}; margin-top:10px; font-style: italic;">💡 {msg}</p>
         </div>
