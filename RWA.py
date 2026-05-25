@@ -4,14 +4,13 @@ import feedparser
 from config import STRATEGY, SHEET_NAME, WORKSHEET_NAME
 from style import apply_custom_style
 from engine import load_data_from_sheet, get_market_data, get_tech_radar, analyze_v25_pro
-# 1. Thêm dòng này để gọi lệnh tự động làm mới
 from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="Cong Thai", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Sovereign V25", layout="wide", initial_sidebar_state="expanded")
 apply_custom_style()
 
-# 2. Tự động làm mới App mỗi 30 giây để săn đủ 8 con coin
-st_autorefresh(interval=60000, key="datarefresh")
+# Tự động làm mới App mỗi 90 giây
+st_autorefresh(interval=90000, key="datarefresh")
 
 with st.sidebar:
     st.markdown("<style>[data-testid='stSidebar']{background-color:#161b22;}.s-news{color:#58a6ff;font-weight:bold;font-size:13px;}.s-link{color:#c9d1d9;font-size:12px;text-decoration:none;}</style>", unsafe_allow_html=True)
@@ -20,7 +19,7 @@ with st.sidebar:
     for e in f.entries[:3]:
         st.markdown(f"<div class='s-news'>{e.title}</div><a class='s-link' href='{e.link}'>Xem chi tiết →</a><br><br>", unsafe_allow_html=True)
     st.markdown("---")
-    st.write("THÁI MINH CÔNG")
+    st.write("Sovereign V25 - Anh Công")
 
 # DATA
 df_h = load_data_from_sheet(SHEET_NAME, WORKSHEET_NAME)
@@ -38,7 +37,7 @@ if not df_h.empty:
             total_pnl += (cp - r['Entry_Price']) * r['Holdings']
 
 # COMMAND CENTER
-st.title("TÍCH LŨY 2026")
+st.title("🛡️ SOVEREIGN COMMAND CENTER")
 d1, d2, d3, d4 = st.columns(4)
 with d1: st.markdown(f'<div class="header-box"><div class="metric-label">Tổng Tài Sản</div><div class="metric-value">${total_v:,.2f}</div></div>', unsafe_allow_html=True)
 with d2:
@@ -64,8 +63,11 @@ for i, (symbol, info) in enumerate(all_coins.items()):
     u = df_h[df_h['Coin'] == symbol] if not df_h.empty else pd.DataFrame()
     h, e = (u['Holdings'].iloc[0], u['Entry_Price'].iloc[0]) if not u.empty else (0.0, 0.0)
     pnl_p = ((cp/e)-1)*100 if e > 0 else 0
+    
     stt, col, msg, dist = analyze_v25_pro(cp, info['ath'], tech)
-    rsi, macd, ema20, sup, res = tech if tech else (0,0,0,0,0)
+    
+    # SỬA TẠI ĐÂY: Bốc tách đủ 6 biến (thêm ema50) từ hàm kỹ thuật để tránh crash app
+    rsi, macd, ema20, ema50, sup, res = tech if tech else (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     
     p_display = f"{cp:.8f}" if cp < 0.001 else f"{cp:,.4f}"
     m_display = f"{macd:.6f}" if abs(macd) < 0.001 else f"{macd:.4f}"
@@ -85,12 +87,12 @@ for i, (symbol, info) in enumerate(all_coins.items()):
                 <span>RSI: <b>{rsi:.1f}</b></span>
                 <span>MACD: <b style="color:{'#3fb950' if macd>0 else '#f85149'};">{m_display}</b></span>
                 <span>Cách ATH: <b>{dist:.1f}%</b></span>
-                <span style="color:#3fb950;">SUP: {sup:,.2f}</span>
-                <span style="color:#f85149;">RES: {res:,.2f}</span>
+                <span style="color:#3fb950;">SUP: {sup:,.4f if cp < 0.1 else :,.2f}</span>
+                <span style="color:#f85149;">RES: {res:,.4f if cp < 0.1 else :,.2f}</span>
             </div>
             <div style="margin-top:12px; font-size:11px; border-top:1px solid #30363d; padding-top:10px; display:flex; justify-content:space-between;">
-                <span style="color:#3fb950; font-weight:bold;">TP1: ${cp*1.5:,.2f}</span>
-                <span style="color:#d29922; font-weight:bold;">TP2: ${cp*2.0:,.2f}</span>
+                <span style="color:#3fb950; font-weight:bold;">TP1: ${cp*1.5:,.4f if cp < 0.1 else :,.2f}</span>
+                <span style="color:#d29922; font-weight:bold;">TP2: ${cp*2.0:,.4f if cp < 0.1 else :,.2f}</span>
             </div>
             <p style="font-size:11px; color:{col}; margin-top:10px; font-style: italic;">💡 {msg}</p>
         </div>
