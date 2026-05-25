@@ -20,7 +20,7 @@ with st.sidebar:
     for e in f.entries[:3]:
         st.markdown(f"<div class='s-news'>{e.title}</div><a class='s-link' href='{e.link}'>Xem chi tiết →</a><br><br>", unsafe_allow_html=True)
     st.markdown("---")
-    st.write("Sovereign V25 - Anh Công")
+    st.write("CONG THAI")
 
 # DATA
 df_h = load_data_from_sheet(SHEET_NAME, WORKSHEET_NAME)
@@ -38,7 +38,7 @@ if not df_h.empty:
             total_pnl += (cp - r['Entry_Price']) * r['Holdings']
 
 # COMMAND CENTER
-st.title("🛡️ SOVEREIGN COMMAND CENTER")
+st.title("TÍCH LŨY")
 d1, d2, d3, d4 = st.columns(4)
 with d1: st.markdown(f'<div class="header-box"><div class="metric-label">Tổng Tài Sản</div><div class="metric-value">${total_v:,.2f}</div></div>', unsafe_allow_html=True)
 with d2:
