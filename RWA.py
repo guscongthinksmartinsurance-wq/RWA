@@ -7,11 +7,11 @@ from engine import load_data_from_sheet, get_market_data, get_tech_radar, analyz
 # 1. Thêm dòng này để gọi lệnh tự động làm mới
 from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="Sovereign V25", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Cong Thai", layout="wide", initial_sidebar_state="expanded")
 apply_custom_style()
 
 # 2. Tự động làm mới App mỗi 30 giây để săn đủ 8 con coin
-st_autorefresh(interval=90000, key="datarefresh")
+st_autorefresh(interval=60000, key="datarefresh")
 
 with st.sidebar:
     st.markdown("<style>[data-testid='stSidebar']{background-color:#161b22;}.s-news{color:#58a6ff;font-weight:bold;font-size:13px;}.s-link{color:#c9d1d9;font-size:12px;text-decoration:none;}</style>", unsafe_allow_html=True)
