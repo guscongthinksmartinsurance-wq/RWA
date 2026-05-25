@@ -38,7 +38,7 @@ if not df_h.empty:
             total_pnl += (cp - r['Entry_Price']) * r['Holdings']
 
 # COMMAND CENTER
-st.title("🛡️ SOVEREIGN COMMAND CENTER")
+st.title("TÍCH LŨY 2026")
 d1, d2, d3, d4 = st.columns(4)
 with d1: st.markdown(f'<div class="header-box"><div class="metric-label">Tổng Tài Sản</div><div class="metric-value">${total_v:,.2f}</div></div>', unsafe_allow_html=True)
 with d2:
