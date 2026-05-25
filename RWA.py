@@ -20,7 +20,7 @@ with st.sidebar:
     for e in f.entries[:3]:
         st.markdown(f"<div class='s-news'>{e.title}</div><a class='s-link' href='{e.link}'>Xem chi tiết →</a><br><br>", unsafe_allow_html=True)
     st.markdown("---")
-    st.write("Sovereign V25 - Anh Công")
+    st.write("THÁI MINH CÔNG")
 
 # DATA
 df_h = load_data_from_sheet(SHEET_NAME, WORKSHEET_NAME)
