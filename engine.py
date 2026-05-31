@@ -4,7 +4,6 @@ import pandas as pd
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
-import pandas_ta as ta
 import time
 import os
 import pickle
@@ -79,7 +78,23 @@ def get_market_data(coin_ids):
     
     return full_data, fng, btc_d
 
-# GIẢI PHÁP ĐỘT PHÁ: Gọi dữ liệu kỹ thuật tập trung một lần duy nhất ở đầu trang
+# THUẬT TOÁN TỰ TÍNH TOÁN KỸ THUẬT THUỒN TÚY - KHÔNG PHỤ THUỘC THƯ VIỆN NGOÀI
+def compute_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).ewm(alpha=1/period, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/period, adjust=False).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return float(rsi.iloc[-1]) if not rsi.empty else 50.0
+
+def compute_macd(series, fast=12, slow=26, signal=9):
+    exp1 = series.ewm(span=fast, adjust=False).mean()
+    exp2 = series.ewm(span=slow, adjust=False).mean()
+    macd_line = exp1 - exp2
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    hist = macd_line - signal_line
+    return float(macd_line.iloc[-1]) if not macd_line.empty else 0.0
+
 def get_all_tech_data(strategy_dict):
     tech_results = {}
     
@@ -98,31 +113,36 @@ def get_all_tech_data(strategy_dict):
                 continue
                 
             try:
-                # Gọi tuần tự có khoảng nghỉ cực ngắn để không bao giờ bị tính là spam
+                # Tăng hẳn lên lấy 100 cây nến để EMA50 chạy chuẩn xác tuyệt đối
                 url = f"https://api.binance.com/api/v3/klines?symbol={binance_symbol}&interval=1d&limit=100"
                 res = requests.get(url, timeout=10)
                 
                 if res.status_code == 200:
                     data = res.json()
                     closes = [float(item[4]) for item in data]
-                    df = pd.DataFrame(closes, columns=['close'])
+                    df_close = pd.Series(closes)
                     
-                    rsi = float(df.ta.rsi(length=14).iloc[-1])
-                    macd_df = df.ta.macd()
-                    macd = float(macd_df.iloc[-1][0])
-                    ema20 = float(df.ta.ema(length=20).iloc[-1])
-                    ema50 = float(df.ta.ema(length=50).iloc[-1])
-                    sup = float(df['close'].min())
-                    res_val = float(df['close'].max())
+                    # Gọi các hàm tính toán nội bộ
+                    rsi = compute_rsi(df_close, 14)
+                    macd = compute_macd(df_close, 12, 26, 9)
+                    
+                    # Tính toán EMA bằng hàm ewm gốc của Pandas
+                    ema20 = float(df_close.ewm(span=20, adjust=False).mean().iloc[-1])
+                    ema50 = float(df_close.ewm(span=50, adjust=False).mean().iloc[-1])
+                    
+                    # Hỗ trợ và kháng cự cứng trong phạm vi chu kỳ nến
+                    sup = float(df_close.min())
+                    res_val = float(df_close.max())
                     
                     tech_results[coin_id] = (rsi, macd, ema20, ema50, sup, res_val)
+                else:
+                    tech_results[coin_id] = (50.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                 
-                # Nghỉ nhẹ 0.2 giây giữa các con coin để làm mượt luồng API
-                time.sleep(0.2)
+                time.sleep(0.1) # Khoảng nghỉ mượt luồng
                 
             except Exception as e:
-                print(f"Lỗi tải nến tập trung cho {binance_symbol}: {e}")
-                tech_results[coin_id] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                print(f"Lỗi tính toán toán học cho {binance_symbol}: {e}")
+                tech_results[coin_id] = (50.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                 
     return tech_results
 
@@ -133,19 +153,23 @@ def analyze_v25_pro(cp, ath, tech):
     rsi, macd, ema20, ema50, sup, res = tech
     dist = ((ath - cp) / ath) * 100 if ath > 0 else 0
     
+    # 1. CHIẾN LƯỢC GOM HÀNG VÙNG ĐÁY
     if rsi < 35 or (cp <= sup * 1.05 and rsi < 45):
         if macd > 0:
             return "STRONG BUY", "#3fb950", "Đáy cứng + Dòng tiền hồi phục", dist
         return "ACCUMULATE", "#2ea043", "Vùng gom an toàn, chia vốn DCA", dist
         
+    # 2. ĐỘNG LỰC TĂNG TRƯỞNG THEO SONG ĐƯỜNG XU HƯỚNG MẠNH
     if ema20 > ema50 and cp > ema50:
         if macd > 0:
             return "STRONG BULL", "#1f6feb", "Sóng tăng khỏe (EMA Cắt + MACD Dương)", dist
         return "BULLISH", "#58a6ff", "Xu hướng tăng bảo toàn, tiếp tục giữ", dist
         
+    # 3. CẢNH BÁO XU HƯỚNG ĐI XUỐNG NGẮN HẠN
     if ema20 < ema50 and cp < ema50:
         return "CAUTION", "#d29922", "Xu hướng yếu, chỉ gom thêm tại hỗ trợ SUP", dist
 
+    # 4. CHỐT LỜI KHI ĐẠT ĐỈNH KHÁNG CỰ / QUÁ MUA
     if rsi > 70 or (cp >= res * 0.97 and rsi > 65):
         return "TAKE PROFIT", "#f85149", "Gặp cản cứng + Quá mua ngắn hạn", dist
         
