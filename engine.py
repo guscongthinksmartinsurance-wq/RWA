@@ -99,7 +99,7 @@ def get_all_tech_data(strategy_dict):
                 
             try:
                 # Gọi tuần tự có khoảng nghỉ cực ngắn để không bao giờ bị tính là spam
-                url = f"https://api.binance.com/api/v3/klines?symbol={binance_symbol}&interval=1d&limit=30"
+                url = f"https://api.binance.com/api/v3/klines?symbol={binance_symbol}&interval=1d&limit=100"
                 res = requests.get(url, timeout=10)
                 
                 if res.status_code == 200:
